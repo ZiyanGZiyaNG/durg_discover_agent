@@ -556,14 +556,10 @@ def get_disease_target_evidence(
     )
 
 
-def get_known_drugs_associated_with_target(
-    ensembl_id: str, efo_id: str
-) -> list[dict[str, Any]]:
+def get_target_drug_evidence_by_ids(ensembl_id: str, efo_id: str) -> dict[str, Any]:
     data = _graphql(KNOWN_DRUGS_QUERY, {"ensemblId": ensembl_id})
-    rows = (
-        ((data.get("target") or {}).get("drugAndClinicalCandidates") or {}).get("rows")
-        or []
-    )
+    candidates = (data.get("target") or {}).get("drugAndClinicalCandidates") or {}
+    rows = candidates.get("rows") or []
 
     def format_row(row: dict[str, Any], matched: bool) -> dict[str, Any]:
         drug = row["drug"]
@@ -586,14 +582,24 @@ def get_known_drugs_associated_with_target(
             "exact_disease_match": matched,
         }
 
-    formatted = []
-    exact = []
+    drugs = []
     for row in rows:
         disease_ids = {
             d["disease"]["id"] for d in row.get("diseases", []) if d.get("disease")
         }
-        item = format_row(row, efo_id in disease_ids)
-        formatted.append(item)
-        if item["exact_disease_match"]:
-            exact.append(item)
-    return exact or formatted
+        drugs.append(format_row(row, efo_id in disease_ids))
+    return {
+        "ensembl_id": ensembl_id,
+        "efo_id": efo_id,
+        "total_drug_count": int(candidates.get("count") or len(rows)),
+        "fetched_drug_count": len(rows),
+        "drugs": drugs,
+    }
+
+
+def get_known_drugs_associated_with_target(
+    ensembl_id: str, efo_id: str
+) -> list[dict[str, Any]]:
+    drugs = get_target_drug_evidence_by_ids(ensembl_id, efo_id)["drugs"]
+    exact = [d for d in drugs if d["exact_disease_match"]]
+    return exact or drugs
