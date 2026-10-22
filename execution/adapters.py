@@ -7,6 +7,7 @@ from query_opentargets import (
     OpenTargetsError,
     discover_disease_targets,
     get_disease_target_evidence_by_ids,
+    get_target_drug_evidence_by_ids,
     resolve_entity,
 )
 
@@ -185,9 +186,66 @@ class DiscoverTargetsAdapter:
         )
 
 
+class RetrieveTargetDrugsAdapter:
+    source = "open_targets"
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        targets = _resolved_for_step(ctx, "target", "resolved_target")
+        diseases = _resolved_for_step(ctx, "disease", "resolved_disease")
+
+        if len(targets) != 1:
+            return StepResult(
+                step_id=ctx.step_id,
+                operation=ctx.operation,
+                status="error",
+                source=self.source,
+                error="retrieve_target_drugs needs exactly one resolved target",
+                elapsed_seconds=time.monotonic() - start,
+            )
+        target = targets[0]
+        efo_id = diseases[0]["id"] if len(diseases) == 1 else ""
+        try:
+            evidence = get_target_drug_evidence_by_ids(target["id"], efo_id)
+        except OpenTargetsError as exc:
+            return StepResult(
+                step_id=ctx.step_id,
+                operation=ctx.operation,
+                status="error",
+                source=self.source,
+                error=str(exc),
+                elapsed_seconds=time.monotonic() - start,
+            )
+
+        total = evidence["total_drug_count"]
+        fetched = evidence["fetched_drug_count"]
+        truncated = fetched < total
+
+        if total == 0:
+            status = "no_records"
+        elif truncated:
+            status = "partial_truncated"
+        else:
+            status = "success"
+
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status=status,
+            source=self.source,
+            payload=evidence,
+            provides=["target_drug_evidence"],
+            total_count=total,
+            fetched_count=fetched,
+            truncated=truncated,
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+
 ADAPTERS: dict[str, Adapter] = {
     "resolve_disease": ResolveEntityAdapter("disease", "resolved_disease"),
     "resolve_target": ResolveEntityAdapter("target", "resolved_target"),
     "retrieve_exact_pair": RetrieveExactPairAdapter(),
     "discover_targets": DiscoverTargetsAdapter(),
+    "retrieve_target_drugs": RetrieveTargetDrugsAdapter(),
 }

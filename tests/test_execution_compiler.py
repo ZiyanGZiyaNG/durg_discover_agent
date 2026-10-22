@@ -151,3 +151,52 @@ def test_discover_targets_uses_disease_resolved_upstream():
     discover.assert_called_once_with(
         "pancreatic cancer", top_n=10, disease_id="disease_ID"
     )
+
+
+def _drug_evidence(total=3, fetched=3):
+    return {
+        "total_drug_count": total,
+        "fetched_drug_count": fetched,
+        "drugs": [{}] * fetched,
+    }
+
+
+def test_target_drugs_uses_target_and_disease_resolved_upstream():
+    plan = _plan(
+        [
+            _step("s1", "resolve_disease", ["d"]),
+            _step("s2", "resolve_target", ["t"], ["s1"]),
+            _step("s3", "retrieve_target_drugs", ["d", "t"], ["s1", "s2"]),
+        ]
+    )
+    with (
+        patch("execution.adapters.resolve_entity", side_effect=_fake_resolve),
+        patch(
+            "execution.adapters.get_target_drug_evidence_by_ids",
+            return_value=_drug_evidence(),
+        ) as drugs,
+    ):
+        trace = run_plan(plan)
+
+    assert [r.status for r in trace] == ["success", "success", "success"]
+    assert trace[2].provides == ["target_drug_evidence"]
+    drugs.assert_called_once_with("target_ID", "disease_ID")
+
+
+def test_target_drugs_without_disease_passes_empty_efo_id():
+    plan = _plan(
+        [
+            _step("s1", "resolve_target", ["t"]),
+            _step("s2", "retrieve_target_drugs", ["t"], ["s1"]),
+        ]
+    )
+    with (
+        patch("execution.adapters.resolve_entity", side_effect=_fake_resolve),
+        patch(
+            "execution.adapters.get_target_drug_evidence_by_ids",
+            return_value=_drug_evidence(),
+        ) as drugs,
+    ):
+        run_plan(plan)
+
+    drugs.assert_called_once_with("target_ID", "")
