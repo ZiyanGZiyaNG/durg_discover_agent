@@ -1,4 +1,4 @@
-"""Configurable chat-model backend for local Ollama or optional Anthropic."""
+"""Configurable chat-model backend for local Ollama, Anthropic, or NVIDIA NIM."""
 
 from __future__ import annotations
 
@@ -62,7 +62,7 @@ def get_chat_model() -> Any:
     """Return the configured LangChain chat model.
 
     Ollama is the default and requires no paid API key. Set LLM_PROVIDER to
-    ``anthropic`` to use the legacy Claude backend.
+    ``anthropic`` or ``nim`` to use a hosted backend.
     """
 
     provider = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
@@ -102,6 +102,25 @@ def get_chat_model() -> Any:
             temperature=temperature,
         )
 
+    if provider == "nim":
+        api_key = os.getenv("NIM_API_KEY")
+        if not api_key:
+            raise RuntimeError("NIM_API_KEY is required when LLM_PROVIDER=nim.")
+        try:
+            from langchain_openai import ChatOpenAI
+        except ImportError as exc:
+            raise RuntimeError(
+                "NIM support is not installed. Run: "
+                "pip install langchain-nvidia-ai-endpoints"
+            ) from exc
+        return ChatOpenAI(
+            model=os.getenv("NIM_MODEL", "meta/llama-3.1-70b-instruct"),
+              api_key=api_key,
+              base_url=os.getenv("NIM_BASE_URL") or "https://integrate.api.nvidia.com/v1",
+              temperature=temperature,
+        )
+
     raise ValueError(
-        f"Unsupported LLM_PROVIDER={provider!r}. Choose 'ollama' or 'anthropic'."
+        f"Unsupported LLM_PROVIDER={provider!r}. "
+        "Choose 'ollama', 'anthropic' or 'nim'."
     )
