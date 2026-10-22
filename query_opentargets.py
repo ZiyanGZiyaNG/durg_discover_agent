@@ -450,20 +450,20 @@ def discover_disease_targets(
     }
 
 
-def get_disease_target_evidence(
-    disease_name: str,
-    target_name: str,
+def get_disease_target_evidence_by_ids(
+    disease_id: str,
+    target_id: str,
+    disease_query: str = "",
+    target_query: str = "",
     page_size: int = 100,
     max_evidence_records: int = 500,
 ) -> dict[str, Any]:
-    """Resolve IDs, query that exact pair, and return scores plus raw evidence."""
+    """Query one already-resolved exact pair; performs no name search."""
 
-    disease_hit = _search(disease_name, "disease")
-    if not disease_hit:
-        raise OpenTargetsError(f"Disease not found: {disease_name}")
-    target_hit = _search(target_name, "target")
-    if not target_hit:
-        raise OpenTargetsError(f"Target not found: {target_name}")
+    disease_name = disease_query or disease_id
+    target_name = target_query or target_id
+    disease_hit = {"id": disease_id, "name": disease_name}
+    target_hit = {"id": target_id, "name": target_name}
 
     data = _graphql(
         DISEASE_TARGET_PAIR_QUERY,
@@ -530,6 +530,30 @@ def get_disease_target_evidence(
         "fetched_target_count": len(rows),
         "limitations": limitations,
     }
+
+
+def get_disease_target_evidence(
+    disease_name: str,
+    target_name: str,
+    page_size: int = 100,
+    max_evidence_records: int = 500,
+) -> dict[str, Any]:
+    """Resolve IDs by name, then query that exact pair."""
+
+    disease_hit = _search(disease_name, "disease")
+    if not disease_hit:
+        raise OpenTargetsError(f"Disease not found: {disease_name}")
+    target_hit = _search(target_name, "target")
+    if not target_hit:
+        raise OpenTargetsError(f"Target not found: {target_name}")
+    return get_disease_target_evidence_by_ids(
+        disease_hit["id"],
+        target_hit["id"],
+        disease_query=disease_name,
+        target_query=target_name,
+        page_size=page_size,
+        max_evidence_records=max_evidence_records,
+    )
 
 
 def get_known_drugs_associated_with_target(
