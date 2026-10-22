@@ -5,6 +5,7 @@ import time
 from execution.contracts import Adapter, StepContext, StepResult
 from query_opentargets import (
     OpenTargetsError,
+    discover_disease_targets,
     get_disease_target_evidence_by_ids,
     resolve_entity,
 )
@@ -137,8 +138,56 @@ class RetrieveExactPairAdapter:
         )
 
 
+class DiscoverTargetsAdapter:
+    source = "open_targets"
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        diseases = _resolved_for_step(ctx, "disease", "resolved_disease")
+        if len(diseases) != 1:
+            return StepResult(
+                step_id=ctx.step_id,
+                operation=ctx.operation,
+                status="error",
+                source=self.source,
+                error="discover_targets needs exactly one resolved disease",
+                elapsed_seconds=time.monotonic() - start,
+            )
+        disease = diseases[0]
+        top_n = ctx.filters.get("top_n", 10)
+        try:
+            found = discover_disease_targets(
+                disease.get("name", ""), top_n=top_n, disease_id=disease["id"]
+            )
+        except (OpenTargetsError, ValueError) as exc:
+            return StepResult(
+                step_id=ctx.step_id,
+                operation=ctx.operation,
+                status="error",
+                source=self.source,
+                error=str(exc),
+                elapsed_seconds=time.monotonic() - start,
+            )
+
+        returned = found["returned_target_count"]
+        total = found["total_associated_target_count"]
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status="success" if returned else "no_records",
+            source=self.source,
+            payload=found,
+            provides=["disease_target_association", "target_candidates"],
+            total_count=total,
+            fetched_count=returned,
+            truncated=returned < total,
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+
 ADAPTERS: dict[str, Adapter] = {
     "resolve_disease": ResolveEntityAdapter("disease", "resolved_disease"),
     "resolve_target": ResolveEntityAdapter("target", "resolved_target"),
     "retrieve_exact_pair": RetrieveExactPairAdapter(),
+    "discover_targets": DiscoverTargetsAdapter(),
 }

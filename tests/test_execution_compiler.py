@@ -124,3 +124,30 @@ def test_exact_pair_uses_ids_resolved_upstream():
         disease_query="pancreatic cancer",
         target_query="target_SYM",
     )
+
+
+def test_discover_targets_uses_disease_resolved_upstream():
+    plan = _plan(
+        [
+            _step("s1", "resolve_disease", ["d"]),
+            _step("s2", "discover_targets", ["d"], ["s1"]),
+        ]
+    )
+    found = {
+        "returned_target_count": 10,
+        "total_associated_target_count": 250,
+        "targets": [],
+    }
+    with (
+        patch("execution.adapters.resolve_entity", side_effect=_fake_resolve),
+        patch(
+            "execution.adapters.discover_disease_targets", return_value=found
+        ) as discover,
+    ):
+        trace = run_plan(plan)
+
+    assert [r.status for r in trace] == ["success", "success"]
+    assert trace[1].provides == ["disease_target_association", "target_candidates"]
+    discover.assert_called_once_with(
+        "pancreatic cancer", top_n=10, disease_id="disease_ID"
+    )
