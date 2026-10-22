@@ -1,7 +1,13 @@
 from __future__ import annotations
+
 import time
+
 from execution.contracts import Adapter, StepContext, StepResult
-from query_opentargets import OpenTargetsError, resolve_entity
+from query_opentargets import (
+    OpenTargetsError,
+    get_disease_target_evidence_by_ids,
+    resolve_entity,
+)
 
 
 class ResolveEntityAdapter:
@@ -55,7 +61,84 @@ class ResolveEntityAdapter:
             elapsed_seconds=time.monotonic() - start,
         )
 
+
+def _resolved_for_step(
+    ctx: StepContext, entity_type: str, capability: str
+) -> list[dict]:
+    on_board = ctx.board.get(capability, {})
+    return [
+        on_board[ref]
+        for ref, entity in ctx.entities.items()
+        if entity.get("entity_type") == entity_type and ref in on_board
+    ]
+
+
+class RetrieveExactPairAdapter:
+    source = "open_targets"
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        diseases = _resolved_for_step(ctx, "disease", "resolved_disease")
+        targets = _resolved_for_step(ctx, "target", "resolved_target")
+
+        if len(diseases) != 1 or len(targets) != 1:
+            return StepResult(
+                step_id=ctx.step_id,
+                operation=ctx.operation,
+                status="error",
+                source=self.source,
+                error=(
+                    "exact pair needs exactly one resolved disease "
+                    "and one resolved target"
+                ),
+                elapsed_seconds=time.monotonic() - start,
+            )
+        disease, target = diseases[0], targets[0]
+        try:
+            evidence = get_disease_target_evidence_by_ids(
+                disease["id"],
+                target["id"],
+                disease_query=disease.get("name", ""),
+                target_query=target.get("symbol") or target.get("name", ""),
+            )
+        except OpenTargetsError as exc:
+            return StepResult(
+                step_id=ctx.step_id,
+                operation=ctx.operation,
+                status="error",
+                source=self.source,
+                error=str(exc),
+                elapsed_seconds=time.monotonic() - start,
+            )
+
+        records = evidence["datasource_evidence"]
+        total = sum(r["total_evidence_count"] for r in records) if records else None
+        fetched = sum(r["fetched_evidence_count"] for r in records) if records else None
+        truncated = any(r["truncated"] for r in records)
+
+        if evidence["overall_association_score"] is None:
+            status = "no_records"
+        elif truncated:
+            status = "partial_truncated"
+        else:
+            status = "success"
+
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status=status,
+            source=self.source,
+            payload=evidence,
+            provides=["disease_target_association"],
+            total_count=total,
+            fetched_count=fetched,
+            truncated=truncated,
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+
 ADAPTERS: dict[str, Adapter] = {
     "resolve_disease": ResolveEntityAdapter("disease", "resolved_disease"),
     "resolve_target": ResolveEntityAdapter("target", "resolved_target"),
+    "retrieve_exact_pair": RetrieveExactPairAdapter(),
 }

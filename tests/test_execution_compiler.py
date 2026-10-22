@@ -49,8 +49,9 @@ def _plan(steps):
         }
     )
 
+
 def _fake_resolve(name, kind, entity_id=None):
-    return {"id": f"{kind}_ID", "name": name, "symbol": ""}
+    return {"id": f"{kind}_ID", "name": name, "symbol": f"{kind}_SYM"}
 
 
 def test_two_resolve_steps_succeed():
@@ -66,6 +67,7 @@ def test_two_resolve_steps_succeed():
     assert [r.status for r in trace] == ["success", "success"]
     assert trace[1].provides == ["resolved_target"]
 
+
 def test_unknown_operation_is_refused_before_any_retrieval():
     plan = _plan(
         [
@@ -79,6 +81,7 @@ def test_unknown_operation_is_refused_before_any_retrieval():
 
     resolve.assert_not_called()
     assert "s2" in excinfo.value.problems[0]
+
 
 def test_failed_step_blocks_its_dependents():
     plan = _plan(
@@ -94,3 +97,30 @@ def test_failed_step_blocks_its_dependents():
 
     assert [r.status for r in trace] == ["error", "not_executed"]
     assert "s1" in trace[1].error
+
+
+def test_exact_pair_uses_ids_resolved_upstream():
+    plan = _plan(
+        [
+            _step("s1", "resolve_disease", ["d"]),
+            _step("s2", "resolve_target", ["t"], ["s1"]),
+            _step("s3", "retrieve_exact_pair", ["d", "t"], ["s1", "s2"]),
+        ]
+    )
+    evidence = {"overall_association_score": 0.9, "datasource_evidence": []}
+    with (
+        patch("execution.adapters.resolve_entity", side_effect=_fake_resolve),
+        patch(
+            "execution.adapters.get_disease_target_evidence_by_ids",
+            return_value=evidence,
+        ) as pair,
+    ):
+        trace = run_plan(plan)
+
+    assert [r.status for r in trace] == ["success", "success", "success"]
+    pair.assert_called_once_with(
+        "disease_ID",
+        "target_ID",
+        disease_query="pancreatic cancer",
+        target_query="target_SYM",
+    )
