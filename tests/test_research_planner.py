@@ -23,18 +23,20 @@ def _valid_plan():
         "chembl": "chembl_search",
     }
     for order, (source, tool) in enumerate(tools.items(), 1):
-        queries.append({
-            "datasource": source,
-            "tool_name": tool,
-            "query_purpose": "查詢證據",
-            "rationale": "必要來源",
-            "verified_search_terms": ["KRAS", "pancreatic cancer"],
-            "unvalidated_search_terms": [],
-            "parameters": {},
-            "expected_question": "是否有相關證據？",
-            "execution_order": order,
-            "collection_policy_status": "not_configured",
-        })
+        queries.append(
+            {
+                "datasource": source,
+                "tool_name": tool,
+                "query_purpose": "查詢證據",
+                "rationale": "必要來源",
+                "verified_search_terms": ["KRAS", "pancreatic cancer"],
+                "unvalidated_search_terms": [],
+                "parameters": {},
+                "expected_question": "是否有相關證據？",
+                "execution_order": order,
+                "collection_policy_status": "not_configured",
+            }
+        )
     plan = Agent1ResearchPlan(
         mode="disease_target",
         original_question="test",
@@ -61,18 +63,24 @@ def _valid_plan():
         },
         overall_objective="規劃查詢",
         required_sources=list(tools),
-        target_subplans=[{
-            "target": target,
-            "objective": "查詢",
-            "queries": queries,
-            "anticipated_data_gaps": ["臨床結果可能尚未發布"],
-        }],
+        target_subplans=[
+            {
+                "target": target,
+                "objective": "查詢",
+                "queries": queries,
+                "anticipated_data_gaps": ["臨床結果可能尚未發布"],
+            }
+        ],
         first_round_completion_criteria=["四個來源皆完成或記錄錯誤"],
         generated_at=datetime.now(timezone.utc),
         model_provider="ollama",
         model_name="qwen3:14b",
     )
-    context = {"mode": "disease_target", "disease": plan.disease.model_dump(), "targets": [target]}
+    context = {
+        "mode": "disease_target",
+        "disease": plan.disease.model_dump(),
+        "targets": [target],
+    }
     return plan, context
 
 

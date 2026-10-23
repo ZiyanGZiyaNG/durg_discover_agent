@@ -155,7 +155,11 @@ class CallbackTraceAgent:
                 {}, [[HumanMessage(content=f"底層實際提示{index}")]], run_id=run_id
             )
             callback.on_llm_end(
-                LLMResult(generations=[[ChatGeneration(message=AIMessage(content=f"原始回覆{index}"))]]),
+                LLMResult(
+                    generations=[
+                        [ChatGeneration(message=AIMessage(content=f"原始回覆{index}"))]
+                    ]
+                ),
                 run_id=run_id,
             )
         return {"structured_response": self.payload}
@@ -201,9 +205,7 @@ def test_each_underlying_model_call_is_captured_in_report():
 
 def test_running_low_level_call_can_be_marked_timed_out():
     trace = ModelCallTraceHandler()
-    trace.on_chat_model_start(
-        {}, [[HumanMessage(content="尚未完成")]], run_id=uuid4()
-    )
+    trace.on_chat_model_start({}, [[HumanMessage(content="尚未完成")]], run_id=uuid4())
     trace.mark_running_calls_timed_out()
     call = trace.snapshot()[0]
     assert call.status == "timed_out"
@@ -220,7 +222,7 @@ def test_prompt_defines_therapeutic_targets_without_leaking_a_case_answer():
 
 
 def test_prompt_explains_metadata_and_reference_contracts():
-    assert '`characteristics` is metadata with exactly this shape' in PLAN_ONLY_PROMPT
+    assert "`characteristics` is metadata with exactly this shape" in PLAN_ONLY_PROMPT
     assert "Never put a prior step's output name in entity_refs" in PLAN_ONLY_PROMPT
     assert "Do not generate `generated_at`" in PLAN_ONLY_PROMPT
 
@@ -269,12 +271,14 @@ def test_direct_full_plan_agent_makes_one_call_and_normalizes_output_dependency(
 
         def invoke(self, messages, config=None):
             self.calls.append((messages, config))
-            return AIMessage(content="</think>\n" + json.dumps(payload, ensure_ascii=False))
+            return AIMessage(
+                content="</think>\n" + json.dumps(payload, ensure_ascii=False)
+            )
 
     model = DirectModel()
-    result = DirectJsonPlanAgent(model).invoke({
-        "messages": [{"role": "user", "content": "建立 Plan"}]
-    })
+    result = DirectJsonPlanAgent(model).invoke(
+        {"messages": [{"role": "user", "content": "建立 Plan"}]}
+    )
 
     plan = result["structured_response"]
     assert len(model.calls) == 1
@@ -301,21 +305,21 @@ def test_direct_patch_agent_makes_one_call_and_parses_json_after_thinking():
 
         def invoke(self, messages, config=None):
             self.calls.append((messages, config))
-            return AIMessage(content=(
-                "內部思考不屬於 JSON。\n</think>\n"
-                '{"upsert_steps": [], "global_safeguards": '
-                '["missing_not_negative"]}'
-            ))
+            return AIMessage(
+                content=(
+                    "內部思考不屬於 JSON。\n</think>\n"
+                    '{"upsert_steps": [], "global_safeguards": '
+                    '["missing_not_negative"]}'
+                )
+            )
 
     model = DirectModel()
-    result = DirectJsonPatchAgent(model).invoke({
-        "messages": [{"role": "user", "content": "修正 Plan"}]
-    })
+    result = DirectJsonPatchAgent(model).invoke(
+        {"messages": [{"role": "user", "content": "修正 Plan"}]}
+    )
 
     assert len(model.calls) == 1
-    assert result["structured_response"].global_safeguards == [
-        "missing_not_negative"
-    ]
+    assert result["structured_response"].global_safeguards == ["missing_not_negative"]
 
 
 def test_direct_patch_preserves_omitted_fields_for_existing_step():
@@ -323,21 +327,29 @@ def test_direct_patch_preserves_omitted_fields_for_existing_step():
 
     class DirectModel:
         def invoke(self, messages, config=None):
-            return AIMessage(content=json.dumps({
-                "upsert_steps": [{
-                    "step_id": "step_6",
-                    "ranking": {
-                        "primary_metric": "overall_association_score",
-                        "direction": "descending",
-                        "secondary_metrics": [],
-                    },
-                }]
-            }))
+            return AIMessage(
+                content=json.dumps(
+                    {
+                        "upsert_steps": [
+                            {
+                                "step_id": "step_6",
+                                "ranking": {
+                                    "primary_metric": "overall_association_score",
+                                    "direction": "descending",
+                                    "secondary_metrics": [],
+                                },
+                            }
+                        ]
+                    }
+                )
+            )
 
-    result = DirectJsonPatchAgent(DirectModel()).invoke({
-        "messages": [],
-        "base_plan": base,
-    })
+    result = DirectJsonPatchAgent(DirectModel()).invoke(
+        {
+            "messages": [],
+            "base_plan": base,
+        }
+    )
 
     step = result["structured_response"].upsert_steps[0]
     assert step.outputs == ["ranked_targets"]
@@ -350,18 +362,26 @@ def test_direct_patch_does_not_complete_an_incomplete_new_step():
 
     class DirectModel:
         def invoke(self, messages, config=None):
-            return AIMessage(content=json.dumps({
-                "upsert_steps": [{
-                    "step_id": "new_step",
-                    "operation": "retrieve_target_drugs",
-                }]
-            }))
+            return AIMessage(
+                content=json.dumps(
+                    {
+                        "upsert_steps": [
+                            {
+                                "step_id": "new_step",
+                                "operation": "retrieve_target_drugs",
+                            }
+                        ]
+                    }
+                )
+            )
 
     with pytest.raises(Exception, match="Field required"):
-        DirectJsonPatchAgent(DirectModel()).invoke({
-            "messages": [],
-            "base_plan": base,
-        })
+        DirectJsonPatchAgent(DirectModel()).invoke(
+            {
+                "messages": [],
+                "base_plan": base,
+            }
+        )
 
 
 def test_direct_dependency_output_is_removed_from_entity_refs_and_recorded():
@@ -433,8 +453,7 @@ def test_grouped_compact_catalog_is_complete_shorter_and_reversible():
     assert len(compact) < len(full)
     assert all(f"canonical={item}" in compact for item in STANDARD_OPERATION_CATALOG)
     assert all(
-        OPERATION_SEMANTICS[item] in compact
-        for item in COMPACT_BOUNDARY_OPERATIONS
+        OPERATION_SEMANTICS[item] in compact for item in COMPACT_BOUNDARY_OPERATIONS
     )
     assert full == OPERATION_CATALOG_PROMPT
 
@@ -501,9 +520,7 @@ def test_planner_deterministically_clears_invented_verified_entity_identity():
 
 
 def test_hidden_acceptance_is_not_leaked_and_only_diagnostics_are_repaired():
-    case = load_acceptance_cases(
-        "tests/fixtures/planner_acceptance_cases.json"
-    )[0]
+    case = load_acceptance_cases("tests/fixtures/planner_acceptance_cases.json")[0]
     incomplete = _valid_payload(case.question)
     incomplete["plan_steps"] = incomplete["plan_steps"][:1]
     agent = FakeAgent(
@@ -571,19 +588,22 @@ def test_schema_valid_failure_is_repaired_with_bounded_patch_when_available():
     assert len(patch_agent.calls) == 1
     assert report.attempts[1].generation_mode == "local_patch"
     assert report.attempts[1].applied_patch.upsert_steps[0].step_id == "step_5"
-    assert report.final_plan.plan_steps[0] == QueryManifestV2.model_validate(
-        _valid_payload()
-    ).plan_steps[0]
+    assert (
+        report.final_plan.plan_steps[0]
+        == QueryManifestV2.model_validate(_valid_payload()).plan_steps[0]
+    )
     patch_prompt = patch_agent.calls[0]["messages"][0]["content"]
     assert "只回傳 QueryManifestPatch" in patch_prompt
 
 
 def test_patch_step_order_must_cover_every_final_step():
     base = QueryManifestV2.model_validate(_valid_payload())
-    patch = QueryManifestPatch.model_validate({
-        "original_question": QUESTION,
-        "step_order": ["step_1"],
-    })
+    patch = QueryManifestPatch.model_validate(
+        {
+            "original_question": QUESTION,
+            "step_order": ["step_1"],
+        }
+    )
     with pytest.raises(ValueError, match="every final step ID"):
         apply_manifest_patch(base, patch)
 
@@ -592,10 +612,12 @@ def test_stale_step_order_is_ignored_when_patch_only_updates_existing_steps():
     base = QueryManifestV2.model_validate(_valid_payload())
     changed = _valid_payload()["plan_steps"][5]
     changed["description"] = "只修改既有排序步驟。"
-    patch = QueryManifestPatch.model_validate({
-        "upsert_steps": [changed],
-        "step_order": ["step_1"],
-    })
+    patch = QueryManifestPatch.model_validate(
+        {
+            "upsert_steps": [changed],
+            "step_order": ["step_1"],
+        }
+    )
 
     repaired = apply_manifest_patch(base, patch)
 
@@ -626,11 +648,13 @@ def test_repair_feedback_batches_structure_before_ranking():
                 "required_correction": "改用正式指標。",
             }
         ],
-        preserve=[{
-            "area": "accepted_capability",
-            "item": "discover_targets",
-            "instruction": "保留。",
-        }],
+        preserve=[
+            {
+                "area": "accepted_capability",
+                "item": "discover_targets",
+                "instruction": "保留。",
+            }
+        ],
     )
 
     batch = select_repair_batch(feedback)
@@ -642,11 +666,13 @@ def test_repair_feedback_batches_structure_before_ranking():
 
 def test_repair_feedback_sends_ranking_after_structure_is_clear():
     feedback = RepairFeedback(
-        incorrect=[{
-            "area": "analysis_metric_requires_available_evidence",
-            "problem": "step_id=rank_targets_1; metric 未登記",
-            "required_correction": "改用正式指標。",
-        }]
+        incorrect=[
+            {
+                "area": "analysis_metric_requires_available_evidence",
+                "problem": "step_id=rank_targets_1; metric 未登記",
+                "required_correction": "改用正式指標。",
+            }
+        ]
     )
 
     batch = select_repair_batch(feedback)
@@ -660,11 +686,13 @@ def test_four_attempt_run_can_be_recorded_without_report_schema_failure():
     unchanged_step = broken["plan_steps"][4]
     report = NaturalLanguageResearchPlanner(
         agent=FakeAgent([{"structured_response": broken}]),
-        patch_agent=FakeAgent([
-            {"structured_response": {"upsert_steps": [unchanged_step]}},
-            {"structured_response": {"upsert_steps": [unchanged_step]}},
-            {"structured_response": {"upsert_steps": [unchanged_step]}},
-        ]),
+        patch_agent=FakeAgent(
+            [
+                {"structured_response": {"upsert_steps": [unchanged_step]}},
+                {"structured_response": {"upsert_steps": [unchanged_step]}},
+                {"structured_response": {"upsert_steps": [unchanged_step]}},
+            ]
+        ),
     ).run_with_report(QUESTION, max_attempts=4)
 
     assert report.status == "failed"
@@ -674,16 +702,14 @@ def test_four_attempt_run_can_be_recorded_without_report_schema_failure():
 
 def test_resume_starts_with_patch_from_supplied_best_plan():
     broken = _valid_payload()
-    broken["plan_steps"][4]["aggregation"] = {
-        "target_translation_layer": "reserved"
-    }
+    broken["plan_steps"][4]["aggregation"] = {"target_translation_layer": "reserved"}
     repaired_step = _valid_payload()["plan_steps"][4]
 
     report = NaturalLanguageResearchPlanner(
         agent=FakeAgent([]),
-        patch_agent=FakeAgent([{
-            "structured_response": {"upsert_steps": [repaired_step]}
-        }]),
+        patch_agent=FakeAgent(
+            [{"structured_response": {"upsert_steps": [repaired_step]}}]
+        ),
     ).run_with_report(
         QUESTION,
         max_attempts=1,
@@ -699,16 +725,20 @@ def test_preserved_operations_do_not_expand_repair_scope():
     plan = QueryManifestV2.model_validate(_valid_payload())
     rules = evaluate_operation_rules(plan)
     feedback = RepairFeedback(
-        missing=[{
-            "area": "aggregation",
-            "problem": "缺少必要項目：target_translation_layer",
-            "required_correction": "加入 aggregation 頂層 key。",
-        }],
-        preserve=[{
-            "area": "accepted_capability",
-            "item": "rank_targets",
-            "instruction": "保留。",
-        }],
+        missing=[
+            {
+                "area": "aggregation",
+                "problem": "缺少必要項目：target_translation_layer",
+                "required_correction": "加入 aggregation 頂層 key。",
+            }
+        ],
+        preserve=[
+            {
+                "area": "accepted_capability",
+                "item": "rank_targets",
+                "instruction": "保留。",
+            }
+        ],
     )
     acceptance = PlanAcceptanceResult(
         case_id="scope_test",
@@ -725,23 +755,26 @@ def test_preserved_operations_do_not_expand_repair_scope():
 def _dependency_feedback(*, rejected_step_id=None):
     incorrect = []
     if rejected_step_id is not None:
-        incorrect.append({
-            "area": "schema_or_integrity",
-            "problem": (
-                "patch attempted edits outside the authorized repair scope: "
-                f"upsert_steps:{rejected_step_id}"
-            ),
-            "required_correction": "只修改授權步驟。",
-        })
+        incorrect.append(
+            {
+                "area": "schema_or_integrity",
+                "problem": (
+                    "patch attempted edits outside the authorized repair scope: "
+                    f"upsert_steps:{rejected_step_id}"
+                ),
+                "required_correction": "只修改授權步驟。",
+            }
+        )
     return RepairFeedback(
-        missing=[{
-            "area": "dependency",
-            "problem": (
-                "缺少必要項目："
-                "stratify_target_evidence_layers->rank_targets"
-            ),
-            "required_correction": "加入正確方向的依賴。",
-        }],
+        missing=[
+            {
+                "area": "dependency",
+                "problem": (
+                    "缺少必要項目：stratify_target_evidence_layers->rank_targets"
+                ),
+                "required_correction": "加入正確方向的依賴。",
+            }
+        ],
         incorrect=incorrect,
     )
 
@@ -763,9 +796,7 @@ def test_dependency_repair_task_resolves_exact_direction_and_step_ids():
     assert task is not None
     assert task.editable_step_id == "step_6"
     assert task.required_dependency_step_id == "step_5"
-    assert task.required_final_dependencies == [
-        "step_2", "step_3", "step_4", "step_5"
-    ]
+    assert task.required_final_dependencies == ["step_2", "step_3", "step_4", "step_5"]
     assert task.forbidden_reverse_edge == "step_5 depends_on step_6"
 
 
@@ -802,7 +833,8 @@ def test_dependency_retry_names_the_previously_rejected_step():
 
 def test_repeated_identical_out_of_scope_patch_stops_early():
     case = next(
-        item for item in load_acceptance_cases(
+        item
+        for item in load_acceptance_cases(
             "tests/fixtures/planner_acceptance_cases.json"
         )
         if item.case_id == "pdac_known_targets"
@@ -811,10 +843,12 @@ def test_repeated_identical_out_of_scope_patch_stops_early():
     wrong_step = plan.plan_steps[4].model_copy(deep=True)
     wrong_step.depends_on.append("step_6")
     wrong_patch = {"upsert_steps": [wrong_step.model_dump()]}
-    patch_agent = FakeAgent([
-        {"structured_response": wrong_patch},
-        {"structured_response": wrong_patch},
-    ])
+    patch_agent = FakeAgent(
+        [
+            {"structured_response": wrong_patch},
+            {"structured_response": wrong_patch},
+        ]
+    )
 
     report = NaturalLanguageResearchPlanner(
         agent=FakeAgent([]), patch_agent=patch_agent
@@ -835,10 +869,12 @@ def test_full_rewrite_repair_mode_remains_reversible(monkeypatch):
     monkeypatch.setenv("PLANNER_REPAIR_MODE", "full_rewrite")
     broken = _valid_payload()
     broken["plan_steps"][4]["aggregation"] = None
-    full_agent = FakeAgent([
-        {"structured_response": broken},
-        {"structured_response": _valid_payload()},
-    ])
+    full_agent = FakeAgent(
+        [
+            {"structured_response": broken},
+            {"structured_response": _valid_payload()},
+        ]
+    )
     patch_agent = FakeAgent([])
 
     report = NaturalLanguageResearchPlanner(
@@ -857,10 +893,12 @@ def test_patch_cannot_modify_an_unflagged_step():
     base = QueryManifestV2.model_validate(_valid_payload())
     changed = _valid_payload()["plan_steps"][0]
     changed["description"] = "越權改寫正確步驟。"
-    patch = QueryManifestPatch.model_validate({
-        "original_question": QUESTION,
-        "upsert_steps": [changed],
-    })
+    patch = QueryManifestPatch.model_validate(
+        {
+            "original_question": QUESTION,
+            "upsert_steps": [changed],
+        }
+    )
     scope = RepairScope(step_ids=["step_5"])
 
     with pytest.raises(ValueError, match="outside the authorized repair scope"):
@@ -874,16 +912,22 @@ def test_invalid_patch_keeps_original_feedback_for_next_repair():
     unauthorized["description"] = "不應修改。"
     valid_repair = _valid_payload()["plan_steps"][4]
     full_agent = FakeAgent([{"structured_response": broken}])
-    patch_agent = FakeAgent([
-        {"structured_response": {
-            "original_question": QUESTION,
-            "upsert_steps": [unauthorized],
-        }},
-        {"structured_response": {
-            "original_question": QUESTION,
-            "upsert_steps": [valid_repair],
-        }},
-    ])
+    patch_agent = FakeAgent(
+        [
+            {
+                "structured_response": {
+                    "original_question": QUESTION,
+                    "upsert_steps": [unauthorized],
+                }
+            },
+            {
+                "structured_response": {
+                    "original_question": QUESTION,
+                    "upsert_steps": [valid_repair],
+                }
+            },
+        ]
+    )
 
     report = NaturalLanguageResearchPlanner(
         agent=full_agent, patch_agent=patch_agent
@@ -898,11 +942,15 @@ def test_invalid_patch_keeps_original_feedback_for_next_repair():
 
 def test_repair_catalog_contains_relevant_operations_not_the_full_table():
     plan = QueryManifestV2.model_validate(_valid_payload())
-    feedback = RepairFeedback(missing=[{
-        "area": "research_capability",
-        "problem": "缺少必要項目：retrieve_approved_indications",
-        "required_correction": "補上核准資料。",
-    }])
+    feedback = RepairFeedback(
+        missing=[
+            {
+                "area": "research_capability",
+                "problem": "缺少必要項目：retrieve_approved_indications",
+                "required_correction": "補上核准資料。",
+            }
+        ]
+    )
 
     catalog = build_repair_operation_catalog(plan, feedback)
 
@@ -922,29 +970,35 @@ def test_equal_quality_patch_does_not_replace_the_better_repair_base():
 
     report = NaturalLanguageResearchPlanner(
         agent=FakeAgent([{"structured_response": broken}]),
-        patch_agent=FakeAgent([
-            {"structured_response": {
-                "original_question": QUESTION,
-                "upsert_steps": [fixes_sources_only],
-            }},
-            {"structured_response": {
-                "original_question": QUESTION,
-                "upsert_steps": [trades_one_error_for_another],
-            }},
-        ]),
+        patch_agent=FakeAgent(
+            [
+                {
+                    "structured_response": {
+                        "original_question": QUESTION,
+                        "upsert_steps": [fixes_sources_only],
+                    }
+                },
+                {
+                    "structured_response": {
+                        "original_question": QUESTION,
+                        "upsert_steps": [trades_one_error_for_another],
+                    }
+                },
+            ]
+        ),
     ).run_with_report(QUESTION)
 
     assert report.status == "failed"
     assert [item.promoted_to_repair_base for item in report.attempts] == [
-        True, True, False
+        True,
+        True,
+        False,
     ]
     assert "did not improve" in report.attempts[2].errors[-1]
 
 
 def test_local_patch_can_add_hidden_acceptance_missing_operations():
-    case = load_acceptance_cases(
-        "tests/fixtures/planner_acceptance_cases.json"
-    )[0]
+    case = load_acceptance_cases("tests/fixtures/planner_acceptance_cases.json")[0]
     complete = _valid_payload(case.question)
     incomplete = _valid_payload(case.question)
     incomplete["plan_steps"] = incomplete["plan_steps"][:1]
@@ -962,16 +1016,20 @@ def test_local_patch_can_add_hidden_acceptance_missing_operations():
 
     report = NaturalLanguageResearchPlanner(
         agent=FakeAgent([{"structured_response": incomplete}]),
-        patch_agent=FakeAgent([
-            {"structured_response": structural_patch},
-            {"structured_response": ranking_patch},
-        ]),
+        patch_agent=FakeAgent(
+            [
+                {"structured_response": structural_patch},
+                {"structured_response": ranking_patch},
+            ]
+        ),
     ).run_with_report(case.question, acceptance_case=case)
 
     assert report.status == "passed"
     assert report.attempts[1].generation_mode == "local_patch"
     assert set(report.attempts[1].repair_scope.new_operations) >= {
-        "discover_targets", "retrieve_target_drugs", "retrieve_tractability",
+        "discover_targets",
+        "retrieve_target_drugs",
+        "retrieve_tractability",
         "stratify_target_evidence_layers",
     }
     assert "rank_targets" in report.attempts[2].repair_scope.new_operations
@@ -1008,9 +1066,7 @@ def test_runtime_overwrites_model_generated_timestamp():
 
 
 def test_repair_report_detects_regression_between_attempts():
-    case = load_acceptance_cases(
-        "tests/fixtures/planner_acceptance_cases.json"
-    )[0]
+    case = load_acceptance_cases("tests/fixtures/planner_acceptance_cases.json")[0]
     first = _valid_payload(case.question)
     first["plan_steps"] = first["plan_steps"][:1]
     second = _valid_payload(case.question)
@@ -1036,9 +1092,7 @@ def test_repair_report_detects_regression_between_attempts():
 
 
 def test_checkpoint_is_written_after_each_completed_attempt(tmp_path):
-    case = load_acceptance_cases(
-        "tests/fixtures/planner_acceptance_cases.json"
-    )[0]
+    case = load_acceptance_cases("tests/fixtures/planner_acceptance_cases.json")[0]
     first = _valid_payload(case.question)
     first["plan_steps"] = first["plan_steps"][:1]
     checkpoint_path = tmp_path / "planner.report.json"
@@ -1062,9 +1116,7 @@ def test_checkpoint_is_written_after_each_completed_attempt(tmp_path):
     assert len(saved["attempts"]) == 2
 
 
-def test_attempt_timeout_saves_failure_and_does_not_start_repair(
-    tmp_path, monkeypatch
-):
+def test_attempt_timeout_saves_failure_and_does_not_start_repair(tmp_path, monkeypatch):
     class SlowAgent:
         calls = 0
 

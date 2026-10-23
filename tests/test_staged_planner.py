@@ -32,42 +32,129 @@ def _strategy():
     }
     return {
         "research_objective": "分層辨識並排序 PDAC 治療標的。",
-        "entities": [{
-            "entity_ref": "disease_1", "entity_type": "disease",
-            "mention": "胰臟癌", "resolution_status": "unresolved",
-        }],
+        "entities": [
+            {
+                "entity_ref": "disease_1",
+                "entity_type": "disease",
+                "mention": "胰臟癌",
+                "resolution_status": "unresolved",
+            }
+        ],
         "needs": [
-            {**shared, "need_id": "resolve", "purpose": "解析疾病", "operation_search_query": "resolve disease entity", "depends_on": [], "required_inputs": ["disease mention"], "outputs": ["resolved_disease"], "sources": ["open_targets"]},
-            {**shared, "need_id": "discover", "purpose": "取得疾病相關標的", "operation_search_query": "discover disease associated targets", "depends_on": ["resolve"], "required_inputs": ["resolved_disease"], "outputs": ["candidate_targets"], "sources": ["open_targets"], "safeguards": ["association_score_not_probability"]},
-            {**shared, "need_id": "drugs", "purpose": "取得標的藥物證據", "operation_search_query": "retrieve target drug evidence", "depends_on": ["discover"], "required_inputs": ["candidate_targets"], "outputs": ["target_drug_evidence"], "sources": ["open_targets", "chembl"]},
-            {**shared, "need_id": "tractability", "purpose": "取得可成藥性證據", "operation_search_query": "retrieve target tractability evidence", "depends_on": ["discover"], "required_inputs": ["candidate_targets"], "outputs": ["target_tractability_evidence"], "sources": ["open_targets"]},
-            {**shared, "need_id": "stratify", "purpose": "分層轉譯證據", "operation_search_query": "stratify target evidence layers", "depends_on": ["drugs", "tractability"], "required_inputs": ["target_drug_evidence", "target_tractability_evidence"], "outputs": ["target_evidence_layers"], "sources": [], "aggregation": {"target_translation_layer": "group"}},
-            {**shared, "need_id": "rank", "purpose": "排序標的", "operation_search_query": "rank targets", "depends_on": ["stratify"], "required_inputs": ["target_evidence_layers"], "outputs": ["ranked_targets"], "sources": [], "ranking": {"primary_metric": "overall_association_score", "direction": "descending", "secondary_metrics": []}},
+            {
+                **shared,
+                "need_id": "resolve",
+                "purpose": "解析疾病",
+                "operation_search_query": "resolve disease entity",
+                "depends_on": [],
+                "required_inputs": ["disease mention"],
+                "outputs": ["resolved_disease"],
+                "sources": ["open_targets"],
+            },
+            {
+                **shared,
+                "need_id": "discover",
+                "purpose": "取得疾病相關標的",
+                "operation_search_query": "discover disease associated targets",
+                "depends_on": ["resolve"],
+                "required_inputs": ["resolved_disease"],
+                "outputs": ["candidate_targets"],
+                "sources": ["open_targets"],
+                "safeguards": ["association_score_not_probability"],
+            },
+            {
+                **shared,
+                "need_id": "drugs",
+                "purpose": "取得標的藥物證據",
+                "operation_search_query": "retrieve target drug evidence",
+                "depends_on": ["discover"],
+                "required_inputs": ["candidate_targets"],
+                "outputs": ["target_drug_evidence"],
+                "sources": ["open_targets", "chembl"],
+            },
+            {
+                **shared,
+                "need_id": "tractability",
+                "purpose": "取得可成藥性證據",
+                "operation_search_query": "retrieve target tractability evidence",
+                "depends_on": ["discover"],
+                "required_inputs": ["candidate_targets"],
+                "outputs": ["target_tractability_evidence"],
+                "sources": ["open_targets"],
+            },
+            {
+                **shared,
+                "need_id": "stratify",
+                "purpose": "分層轉譯證據",
+                "operation_search_query": "stratify target evidence layers",
+                "depends_on": ["drugs", "tractability"],
+                "required_inputs": [
+                    "target_drug_evidence",
+                    "target_tractability_evidence",
+                ],
+                "outputs": ["target_evidence_layers"],
+                "sources": [],
+                "aggregation": {"target_translation_layer": "group"},
+            },
+            {
+                **shared,
+                "need_id": "rank",
+                "purpose": "排序標的",
+                "operation_search_query": "rank targets",
+                "depends_on": ["stratify"],
+                "required_inputs": ["target_evidence_layers"],
+                "outputs": ["ranked_targets"],
+                "sources": [],
+                "ranking": {
+                    "primary_metric": "overall_association_score",
+                    "direction": "descending",
+                    "secondary_metrics": [],
+                },
+            },
         ],
         "evidence_requirements": ["疾病關聯、藥物與可成藥性證據"],
         "completion_criteria": ["完成標的分層與排序"],
-        "global_safeguards": ["association_does_not_imply_efficacy", "tractability_not_efficacy", "provenance_pagination_truncation"],
+        "global_safeguards": [
+            "association_does_not_imply_efficacy",
+            "tractability_not_efficacy",
+            "provenance_pagination_truncation",
+        ],
         "characteristics": {"primary": "single_hop", "secondary": ["filter_and_rank"]},
     }
 
 
 def _mapping(overrides=None):
     operations = {
-        "resolve": "resolve_disease", "discover": "discover_targets",
-        "drugs": "retrieve_target_drugs", "tractability": "retrieve_tractability",
-        "stratify": "stratify_target_evidence_layers", "rank": "rank_targets",
+        "resolve": "resolve_disease",
+        "discover": "discover_targets",
+        "drugs": "retrieve_target_drugs",
+        "tractability": "retrieve_tractability",
+        "stratify": "stratify_target_evidence_layers",
+        "rank": "rank_targets",
     }
     operations.update(overrides or {})
-    return {"matches": [
-        {"need_id": need_id, "match_status": "matched", "canonical_operation": operation}
-        for need_id, operation in operations.items()
-    ]}
+    return {
+        "matches": [
+            {
+                "need_id": need_id,
+                "match_status": "matched",
+                "canonical_operation": operation,
+            }
+            for need_id, operation in operations.items()
+        ]
+    }
 
 
 def test_candidate_shortlist_finds_key_operation_boundaries():
-    assert "retrieve_target_drugs" in operation_candidates("retrieve target drug evidence")
-    assert "retrieve_tractability" in operation_candidates("target tractability evidence")
-    assert "stratify_target_evidence_layers" in operation_candidates("stratify target evidence layers")
+    assert "retrieve_target_drugs" in operation_candidates(
+        "retrieve target drug evidence"
+    )
+    assert "retrieve_tractability" in operation_candidates(
+        "target tractability evidence"
+    )
+    assert "stratify_target_evidence_layers" in operation_candidates(
+        "stratify target evidence layers"
+    )
 
 
 def test_staged_planner_compiles_and_passes_hidden_case(tmp_path):
@@ -76,9 +163,9 @@ def test_staged_planner_compiles_and_passes_hidden_case(tmp_path):
     mapping_agent = FakeAgent(_mapping())
     checkpoint = tmp_path / "staged.report.json"
 
-    report = StagedNaturalLanguagePlanner(strategy_agent, mapping_agent).run_with_report(
-        case.question, acceptance_case=case, checkpoint_path=checkpoint
-    )
+    report = StagedNaturalLanguagePlanner(
+        strategy_agent, mapping_agent
+    ).run_with_report(case.question, acceptance_case=case, checkpoint_path=checkpoint)
 
     assert report.status == "passed"
     assert report.semantic_acceptance.passed is True
@@ -104,7 +191,8 @@ def test_no_equivalent_operation_is_held_for_human_review():
     strategy = _strategy()
     mapping = _mapping()
     mapping["matches"][0] = {
-        "need_id": "resolve", "match_status": "no_equivalent",
+        "need_id": "resolve",
+        "match_status": "no_equivalent",
         "proposed_operation_name": "resolve_rare_disease_context",
         "proposal_reason": "候選項不涵蓋罕病語境解析。",
     }
@@ -115,4 +203,3 @@ def test_no_equivalent_operation_is_held_for_human_review():
     assert report.status == "pending_human_review"
     assert report.final_plan is None
     assert report.executed_retrieval_tools == []
-

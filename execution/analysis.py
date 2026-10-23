@@ -29,6 +29,13 @@ def rank_rows(
 
 
 RULE_VERSION = "provisional_v0"
+RULE_NOTE = (
+    "Layer definitions are provisional and pending research-team approval "
+    "(docs/DECISIONS_REQUIRED.md). translational_support means at least one "
+    "known-drug record or at least one tractability assessment with value true; "
+    "no thresholds or scores are applied. undetermined means a required evidence "
+    "source is missing for the target, so absence is not established."
+)
 
 
 def translation_layer(

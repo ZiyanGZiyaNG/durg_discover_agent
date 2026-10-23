@@ -52,18 +52,18 @@ def _use_unsupported_therapeutic_filter(payload):
 
 
 def _use_unregistered_drug_metric(payload):
-    payload["plan_steps"][5]["ranking"]["secondary_metrics"] = [
-        "drug_evidence_count"
-    ]
+    payload["plan_steps"][5]["ranking"]["secondary_metrics"] = ["drug_evidence_count"]
 
 
 def _put_generated_collection_in_entities(payload):
-    payload["entities"].append({
-        "entity_ref": "pdac_targets",
-        "entity_type": "target",
-        "mention": "pdac_targets",
-        "resolution_status": "unresolved",
-    })
+    payload["entities"].append(
+        {
+            "entity_ref": "pdac_targets",
+            "entity_type": "target",
+            "mention": "pdac_targets",
+            "resolution_status": "unresolved",
+        }
+    )
 
 
 def _use_wrong_resolution_operation(payload):
@@ -71,9 +71,7 @@ def _use_wrong_resolution_operation(payload):
 
 
 def _use_placeholder_aggregation(payload):
-    payload["plan_steps"][4]["aggregation"] = {
-        "target_translation_layer": "reserved"
-    }
+    payload["plan_steps"][4]["aggregation"] = {"target_translation_layer": "reserved"}
 
 
 REGRESSION_CASES = (
@@ -160,9 +158,7 @@ def _without_optional_ranking(payload):
 
 def _alternate_stratification_shape(payload):
     payload["plan_steps"][4]["aggregation"] = {
-        "evidence_tiers": {
-            "dimensions": ["association", "drug", "tractability"]
-        }
+        "evidence_tiers": {"dimensions": ["association", "drug", "tractability"]}
     }
 
 

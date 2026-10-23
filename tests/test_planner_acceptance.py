@@ -27,7 +27,9 @@ FIXTURE = Path(__file__).parent / "fixtures" / "planner_acceptance_cases.json"
 
 
 def _compliant_plan(case):
-    entity_refs = [f"entity_{index}" for index, _ in enumerate(case.required_entities, 1)]
+    entity_refs = [
+        f"entity_{index}" for index, _ in enumerate(case.required_entities, 1)
+    ]
     entities = [
         PlannedEntityV2(
             entity_ref=entity_ref,
@@ -99,7 +101,8 @@ def test_operation_table_contains_authoritative_contract_fields():
     assert stratify.operation_kind == "analysis"
     assert stratify.requires_aggregation is True
     assert set(stratify.requires_all) == {
-        "disease_target_association", "target_drug_evidence",
+        "disease_target_association",
+        "target_drug_evidence",
         "tractability_evidence",
     }
 
@@ -263,7 +266,9 @@ def test_repair_feedback_contains_only_actual_gaps_and_errors():
 def test_dependency_feedback_explains_arrow_direction_as_depends_on_edit():
     case = load_acceptance_cases(FIXTURE)[0]
     plan = _compliant_plan(case)
-    rank_step = next(step for step in plan.plan_steps if step.operation == "rank_targets")
+    rank_step = next(
+        step for step in plan.plan_steps if step.operation == "rank_targets"
+    )
     rank_step.depends_on = []
     result = evaluate_plan(case, plan)
 
@@ -279,7 +284,9 @@ def test_ranking_alias_is_accepted_and_actual_operations_are_reported():
     plan = _compliant_plan(case)
     for step in plan.plan_steps:
         step.ranking = None
-    rank_step = next(step for step in plan.plan_steps if step.operation == "rank_targets")
+    rank_step = next(
+        step for step in plan.plan_steps if step.operation == "rank_targets"
+    )
     rank_step.ranking = {"association_score": "descending"}
 
     result = evaluate_plan(case, plan)

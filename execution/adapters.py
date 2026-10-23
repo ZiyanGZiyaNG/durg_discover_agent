@@ -10,7 +10,7 @@ from query_opentargets import (
     get_target_tractability_by_id,
     resolve_entity,
 )
-from execution.analysis import rank_rows
+from execution.analysis import RULE_NOTE, RULE_VERSION, rank_rows, stratify_targets
 
 
 class ResolveEntityAdapter:
@@ -375,6 +375,60 @@ class RankTargetsAdapter:
         )
 
 
+class StratifyTargetEvidenceAdapter:
+    source = "local_analysis"
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        association = ctx.board.get("disease_target_association") or {}
+        drug_evidence = ctx.board.get("target_drug_evidence") or {}
+        tractability_evidence = ctx.board.get("tractability_evidence") or {}
+        problem = None
+        if "target_translation_layer" not in (ctx.aggregation or {}):
+            problem = "stratify needs aggregation.target_translation_layer"
+        elif "targets" not in association:
+            problem = "stratify needs a target list from discover_targets"
+
+        if problem is not None:
+            return StepResult(
+                step_id=ctx.step_id,
+                operation=ctx.operation,
+                status="error",
+                source=self.source,
+                error=problem,
+                elapsed_seconds=time.monotonic() - start,
+            )
+        stratified = stratify_targets(
+            association["targets"], drug_evidence, tractability_evidence
+        )
+        failed_targets = {
+            "target_drug_evidence": drug_evidence.get("failed_targets", {}),
+            "tractability_evidence": tractability_evidence.get("failed_targets", {}),
+        }
+
+        if not stratified:
+            status = "no_records"
+        elif any(failed_targets.values()):
+            status = "partial_error"
+        else:
+            status = "success"
+
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status=status,
+            source=self.source,
+            payload={
+                "rule_version": RULE_VERSION,
+                "targets": stratified,
+                "failed_targets": failed_targets,
+                "limitations": [*association.get("limitations", []), RULE_NOTE],
+            },
+            provides=["stratified_target_evidence"],
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+
 ADAPTERS: dict[str, Adapter] = {
     "resolve_disease": ResolveEntityAdapter("disease", "resolved_disease"),
     "resolve_target": ResolveEntityAdapter("target", "resolved_target"),
@@ -383,4 +437,5 @@ ADAPTERS: dict[str, Adapter] = {
     "retrieve_target_drugs": RetrieveTargetDrugsAdapter(),
     "retrieve_tractability": RetrieveTractabilityAdapter(),
     "rank_targets": RankTargetsAdapter(),
+    "stratify_target_evidence_layers": StratifyTargetEvidenceAdapter(),
 }

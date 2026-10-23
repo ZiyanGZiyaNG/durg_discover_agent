@@ -46,9 +46,7 @@ def test_agent2_loader_accepts_strict_agent1_output(tmp_path):
 def test_agent2_loader_rejects_wrong_producer(tmp_path):
     path = tmp_path / "wrong-producer.json"
     path.write_text(
-        json.dumps(
-            {**METADATA, "producer": "manual", "agent_1_evidence": SAMPLE}
-        ),
+        json.dumps({**METADATA, "producer": "manual", "agent_1_evidence": SAMPLE}),
         encoding="utf-8",
     )
     with pytest.raises(Agent1EvidenceInputError):

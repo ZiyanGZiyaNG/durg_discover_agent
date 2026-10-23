@@ -13,9 +13,7 @@ SAMPLE = {
     "target_symbol": "KRAS",
     "target_name": "KRas proto-oncogene, GTPase",
     "overall_association_score": 0.512,
-    "datasource_scores": [
-        {"datasource_id": "cancer_gene_census", "score": 0.81}
-    ],
+    "datasource_scores": [{"datasource_id": "cancer_gene_census", "score": 0.81}],
     "rank_within_fetched_targets": 1,
     "fetched_target_count": 100,
     "limitations": ["Test fixture."],
@@ -25,9 +23,7 @@ SAMPLE = {
 @patch("agent1.get_disease_target_evidence", return_value=SAMPLE)
 def test_agent_1_returns_stable_schema(_mock):
     result = BioinformaticsEvidenceAgent().run(
-        DiseaseTargetInput(
-            disease="pancreatic ductal adenocarcinoma", target="KRAS"
-        )
+        DiseaseTargetInput(disease="pancreatic ductal adenocarcinoma", target="KRAS")
     )
     assert result.disease_id == "MONDO_0005184"
     assert result.target_id == "ENSG00000133703"
