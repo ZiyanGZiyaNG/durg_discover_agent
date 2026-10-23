@@ -234,3 +234,48 @@ def test_discover_then_target_drugs_queries_every_candidate():
         ("ENSG2", "disease_ID"),
     ]
     assert list(trace[2].payload["by_target"]) == ["ENSG1", "ENSG2"]
+
+
+def _tractability(count=4):
+    return {"assessment_count": count, "assessments": [{}] * count}
+
+
+def test_discovered_targets_feed_both_drugs_and_tractability():
+    plan = _plan(
+        [
+            _step("s1", "resolve_disease", ["d"]),
+            _step("s2", "discover_targets", ["d"], ["s1"]),
+            _step("s3", "retrieve_target_drugs", ["d"], ["s2"]),
+            _step("s4", "retrieve_tractability", ["d"], ["s2"]),
+        ]
+    )
+    found = {
+        "returned_target_count": 2,
+        "total_associated_target_count": 2,
+        "targets": [
+            {"target_id": "ENSG1", "target_symbol": "KRAS", "target_name": "n1"},
+            {"target_id": "ENSG2", "target_symbol": "TP53", "target_name": "n2"},
+        ],
+    }
+
+    with (
+        patch("execution.adapters.resolve_entity", side_effect=_fake_resolve),
+        patch("execution.adapters.discover_disease_targets", return_value=found),
+        patch(
+            "execution.adapters.get_target_drug_evidence_by_ids",
+            return_value=_drug_evidence(),
+        ) as drugs,
+        patch(
+            "execution.adapters.get_target_tractability_by_id",
+            return_value=_tractability(),
+        ) as tractability,
+    ):
+        trace = run_plan(plan)
+
+    assert [r.status for r in trace] == ["success"] * 4
+    assert [c.args for c in drugs.call_args_list] == [
+        ("ENSG1", "disease_ID"),
+        ("ENSG2", "disease_ID"),
+    ]
+    assert [c.args for c in tractability.call_args_list] == [("ENSG1",), ("ENSG2",)]
+    assert list(trace[3].payload["by_target"]) == ["ENSG1", "ENSG2"]
