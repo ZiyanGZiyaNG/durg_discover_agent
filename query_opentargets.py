@@ -86,6 +86,16 @@ query KnownDrugs($ensemblId: String!) {
 }
 """
 
+TRACTABILITY_QUERY = """
+query Tractability($ensemblId: String!) {
+    target(ensemblId: $ensemblId) {
+        id
+        approvedSymbol
+        tractability { label modality value}
+    }
+}
+"""
+
 TYPE_INTROSPECTION_QUERY = """
 query TypeFields($typeName: String!) {
   __type(name: $typeName) {
@@ -603,3 +613,24 @@ def get_known_drugs_associated_with_target(
     drugs = get_target_drug_evidence_by_ids(ensembl_id, efo_id)["drugs"]
     exact = [d for d in drugs if d["exact_disease_match"]]
     return exact or drugs
+
+
+def get_target_tractability_by_id(ensembl_id: str) -> dict[str, Any]:
+    data = _graphql(TRACTABILITY_QUERY, {"ensemblId": ensembl_id})
+    target = data.get("target")
+    if not target:
+        raise OpenTargetsError(f"Target record unavailable: {ensembl_id}")
+    assessments = [
+        {"modality": item["modality"], "label": item["label"], "value": item["value"]}
+        for item in (target.get("tractability") or [])
+    ]
+    return {
+        "target_id": target["id"],
+        "target_symbol": target.get("approvedSymbol") or "",
+        "assessment_count": len(assessments),
+        "assessments": assessments,
+        "limitations": [
+            "Tractability is an in silico druggability assessment, "
+            "not evidence of efficacy or of an existing drug."
+        ]
+    }
