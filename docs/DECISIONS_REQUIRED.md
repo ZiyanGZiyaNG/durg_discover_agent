@@ -31,6 +31,7 @@ Engineering contributors must not silently decide these items.
   `disease_association_only`. No thresholds or scores are applied.
 - Whether `retrieve_target_drugs` must also query ChEMBL. The planner lists
   `chembl` as a source, but the adapter currently queries Open Targets only.
+  - `tractability_score` (registered ranking metric): define it, or map it to `tractable_bucket_count`. Until then rank_targets refuses it.
 
 ## Data governance
 

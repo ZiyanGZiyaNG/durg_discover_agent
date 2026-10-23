@@ -66,14 +66,17 @@ class ResolveEntityAdapter:
 
 
 def _resolved_for_step(
-    ctx: StepContext, entity_type: str, capability: str
+        ctx: StepContext, entity_type: str, capability: str
 ) -> list[dict]:
     on_board = ctx.board.get(capability, {})
-    return [
-        on_board[ref]
+    named = [
+        ref
         for ref, entity in ctx.entities.items()
-        if entity.get("entity_type") == entity_type and ref in on_board
+        if entity.get("entity_type") == entity_type
     ]
+    if not named:
+        return list(on_board.values())
+    return [on_board[ref] for ref in named if ref in on_board]
 
 
 def _targets_for_step(ctx: StepContext) -> list[dict]:
@@ -438,4 +441,5 @@ ADAPTERS: dict[str, Adapter] = {
     "retrieve_tractability": RetrieveTractabilityAdapter(),
     "rank_targets": RankTargetsAdapter(),
     "stratify_target_evidence_layers": StratifyTargetEvidenceAdapter(),
+    "discover_targets_per_disease": DiscoverTargetsAdapter(),
 }
