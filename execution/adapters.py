@@ -1,5 +1,6 @@
 from __future__ import annotations
 import time
+from collections.abc import Callable
 from execution.contracts import Adapter, StepContext, StepResult
 from query_opentargets import (
     OpenTargetsError,
@@ -86,6 +87,19 @@ def _targets_for_step(ctx: StepContext) -> list[dict]:
         }
         for target in candidates.get("targets", [])
     ]
+
+
+def _collect_per_target(
+    targets: list[dict], fetch: Callable[[dict], dict]
+) -> tuple[dict[str, dict], dict[str, str]]:
+    by_target: dict[str, dict] = {}
+    failed_targets: dict[str, str] = {}
+    for target in targets:
+        try:
+            by_target[target["id"]] = fetch(target)
+        except OpenTargetsError as exc:
+            failed_targets[target["id"]] = str(exc)
+    return by_target, failed_targets
 
 
 class RetrieveExactPairAdapter:
@@ -218,15 +232,10 @@ class RetrieveTargetDrugsAdapter:
             )
 
         efo_id = diseases[0]["id"] if len(diseases) == 1 else ""
-        by_target: dict[str, dict] = {}
-        failed_targets: dict[str, str] = {}
-        for target in targets:
-            try:
-                by_target[target["id"]] = get_target_drug_evidence_by_ids(
-                    target["id"], efo_id
-                )
-            except OpenTargetsError as exc:
-                failed_targets[target["id"]] = str(exc)
+        by_target, failed_targets = _collect_per_target(
+            targets,
+            lambda target: get_target_drug_evidence_by_ids(target["id"], efo_id),
+        )
 
         errors = "; ".join(f"{tid}: {msg}" for tid, msg in failed_targets.items())
         if not by_target:
