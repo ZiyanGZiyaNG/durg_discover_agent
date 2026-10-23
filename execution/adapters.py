@@ -1,7 +1,5 @@
 from __future__ import annotations
-
 import time
-
 from execution.contracts import Adapter, StepContext, StepResult
 from query_opentargets import (
     OpenTargetsError,
@@ -72,6 +70,21 @@ def _resolved_for_step(
         on_board[ref]
         for ref, entity in ctx.entities.items()
         if entity.get("entity_type") == entity_type and ref in on_board
+    ]
+
+
+def _targets_for_step(ctx: StepContext) -> list[dict]:
+    explicit = _resolved_for_step(ctx, "target", "resolved_target")
+    if explicit:
+        return explicit
+    candidates = ctx.board.get("target_candidates") or {}
+    return [
+        {
+            "id": target["target_id"],
+            "symbol": target["target_symbol"],
+            "name": target["target_name"],
+        }
+        for target in candidates.get("targets", [])
     ]
 
 
@@ -191,37 +204,48 @@ class RetrieveTargetDrugsAdapter:
 
     def run(self, ctx: StepContext) -> StepResult:
         start = time.monotonic()
-        targets = _resolved_for_step(ctx, "target", "resolved_target")
+        targets = _targets_for_step(ctx)
         diseases = _resolved_for_step(ctx, "disease", "resolved_disease")
 
-        if len(targets) != 1:
+        if not targets:
             return StepResult(
                 step_id=ctx.step_id,
                 operation=ctx.operation,
                 status="error",
                 source=self.source,
-                error="retrieve_target_drugs needs exactly one resolved target",
-                elapsed_seconds=time.monotonic() - start,
-            )
-        target = targets[0]
-        efo_id = diseases[0]["id"] if len(diseases) == 1 else ""
-        try:
-            evidence = get_target_drug_evidence_by_ids(target["id"], efo_id)
-        except OpenTargetsError as exc:
-            return StepResult(
-                step_id=ctx.step_id,
-                operation=ctx.operation,
-                status="error",
-                source=self.source,
-                error=str(exc),
+                error="retrieve_target_drugs needs at least one resolved target",
                 elapsed_seconds=time.monotonic() - start,
             )
 
-        total = evidence["total_drug_count"]
-        fetched = evidence["fetched_drug_count"]
+        efo_id = diseases[0]["id"] if len(diseases) == 1 else ""
+        by_target: dict[str, dict] = {}
+        failed_targets: dict[str, str] = {}
+        for target in targets:
+            try:
+                by_target[target["id"]] = get_target_drug_evidence_by_ids(
+                    target["id"], efo_id
+                )
+            except OpenTargetsError as exc:
+                failed_targets[target["id"]] = str(exc)
+
+        errors = "; ".join(f"{tid}: {msg}" for tid, msg in failed_targets.items())
+        if not by_target:
+            return StepResult(
+                step_id=ctx.step_id,
+                operation=ctx.operation,
+                status="error",
+                source=self.source,
+                error=errors,
+                elapsed_seconds=time.monotonic() - start,
+            )
+
+        total = sum(e["total_drug_count"] for e in by_target.values())
+        fetched = sum(e["fetched_drug_count"] for e in by_target.values())
         truncated = fetched < total
 
-        if total == 0:
+        if failed_targets:
+            status = "partial_error"
+        elif total == 0:
             status = "no_records"
         elif truncated:
             status = "partial_truncated"
@@ -233,11 +257,12 @@ class RetrieveTargetDrugsAdapter:
             operation=ctx.operation,
             status=status,
             source=self.source,
-            payload=evidence,
+            payload={"by_target": by_target, "failed_targets": failed_targets},
             provides=["target_drug_evidence"],
             total_count=total,
             fetched_count=fetched,
             truncated=truncated,
+            error=errors or None,
             elapsed_seconds=time.monotonic() - start,
         )
 

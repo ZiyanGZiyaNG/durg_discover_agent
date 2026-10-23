@@ -7,6 +7,7 @@ Status = Literal[
     "success",
     "partial_truncated",
     "partial_timeout",
+    "partial_error",
     "no_records",
     "error",
     "not_executed",
@@ -33,6 +34,7 @@ class StepContext(BaseModel):
     entities: dict[str, dict[str, Any]]
     board: dict[str, Any] = Field(default_factory=dict)
     filters: dict[str, Any] = Field(default_factory=dict)
+
 
 class Adapter(Protocol):
     source: str
