@@ -66,7 +66,7 @@ class ResolveEntityAdapter:
 
 
 def _resolved_for_step(
-        ctx: StepContext, entity_type: str, capability: str
+    ctx: StepContext, entity_type: str, capability: str
 ) -> list[dict]:
     on_board = ctx.board.get(capability, {})
     named = [
