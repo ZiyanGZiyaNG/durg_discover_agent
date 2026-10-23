@@ -1,12 +1,9 @@
 from unittest.mock import patch
 
-from execution.compiler import run_plan
-from schemas import QueryManifestV2
-from unittest.mock import patch
-
 import pytest
 
 from execution.compiler import PlanRefusedError, run_plan
+from execution.contracts import StepResult
 from query_opentargets import OpenTargetsError
 from schemas import QueryManifestV2
 
@@ -279,3 +276,54 @@ def test_discovered_targets_feed_both_drugs_and_tractability():
     ]
     assert [c.args for c in tractability.call_args_list] == [("ENSG1",), ("ENSG2",)]
     assert list(trace[3].payload["by_target"]) == ["ENSG1", "ENSG2"]
+
+
+class SpyAdapter:
+    source = "spy"
+
+    def __init__(self):
+        self.ctx = None
+
+    def run(self, ctx):
+        self.ctx = ctx
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status="success",
+            source=self.source,
+        )
+
+    
+
+
+def test_ranking_and_aggregation_reach_the_adapter():
+    plan = _plan(
+        [
+            _step("s1", "resolve_disease", ["d"]),
+            _step("s2", "discover_targets", ["d"], ["s1"]),
+            {
+                **_step("s3", "rank_targets", ["d"], ["s2"]),
+                "ranking": {
+                    "primary_metric": "overall_association_score",
+                    "direction": "descending",
+                },
+                "aggregation": {"target_translation_layer": "group"},
+            },
+        ]
+    )
+    found = {
+        "returned_target_count": 1,
+        "total_associated_target_count": 1,
+        "targets": [],
+    }
+    spy = SpyAdapter()
+    with (
+        patch("execution.adapters.resolve_entity", side_effect=_fake_resolve),
+        patch("execution.adapters.discover_disease_targets", return_value=found),
+        patch.dict("execution.compiler.ADAPTERS", {"rank_targets": spy}),
+    ):
+        run_plan(plan)
+
+    assert spy.ctx.ranking["primary_metric"] == "overall_association_score"
+    assert spy.ctx.ranking["direction"] == "descending"
+    assert spy.ctx.aggregation == {"target_translation_layer": "group"}

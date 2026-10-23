@@ -79,6 +79,8 @@ def run_plan(plan: QueryManifestV2) -> list[StepResult]:
                 entities={ref: entities[ref] for ref in step.entity_refs},
                 board=board,
                 filters=step.filters,
+                ranking=step.ranking.model_dump() if step.ranking else None,
+                aggregation=step.aggregation,
             )
             result = ADAPTERS[step.operation].run(ctx)
             _post_to_board(board, result)

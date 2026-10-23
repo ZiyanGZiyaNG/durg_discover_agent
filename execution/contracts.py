@@ -34,6 +34,8 @@ class StepContext(BaseModel):
     entities: dict[str, dict[str, Any]]
     board: dict[str, Any] = Field(default_factory=dict)
     filters: dict[str, Any] = Field(default_factory=dict)
+    ranking: dict[str, Any] | None = None
+    aggregation: dict[str, Any] | None = None
 
 
 class Adapter(Protocol):

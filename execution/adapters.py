@@ -276,6 +276,7 @@ class RetrieveTargetDrugsAdapter:
             elapsed_seconds=time.monotonic() - start,
         )
 
+
 class RetrieveTractabilityAdapter:
     source = "open_targets"
 
@@ -326,6 +327,7 @@ class RetrieveTractabilityAdapter:
             error=errors or None,
             elapsed_seconds=time.monotonic() - start,
         )
+
 
 ADAPTERS: dict[str, Adapter] = {
     "resolve_disease": ResolveEntityAdapter("disease", "resolved_disease"),
