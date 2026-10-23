@@ -2,10 +2,19 @@ from __future__ import annotations
 
 from execution.adapters import ADAPTERS
 from execution.contracts import StepContext, StepResult
+from execution.records import OUTPUT_MODELS
 from planner_acceptance import OPERATION_TABLE
+from pydantic import ValidationError
 from schemas import QueryManifestV2
 
 FAILED = {"error", "not_executed"}
+HAS_PAYLOAD = {
+    "success",
+    "partial_truncated",
+    "partial_timeout",
+    "partial_error",
+    "no_records",
+}
 
 
 class PlanRefusedError(Exception):
@@ -34,6 +43,29 @@ def _missing(operation: str, board: dict) -> list[str]:
     if entry.requires_any and not any(cap in board for cap in entry.requires_any):
         missing.append("one of " + "/".join(entry.requires_any))
     return missing
+
+
+def _check_output(result: StepResult) -> StepResult:
+    """An adapter whose payload breaks its operation's model is an error step."""
+    if result.status not in HAS_PAYLOAD:
+        return result
+    model = OUTPUT_MODELS[result.operation]
+    try:
+        model.model_validate(result.payload)
+    except ValidationError as exc:
+        first = exc.errors()[0]
+        where = ".".join(str(part) for part in first["loc"])
+        return result.model_copy(
+            update={
+                "status": "error",
+                "payload": None,
+                "provides": [],
+                "error": (
+                    f"output does not match {model.__name__}: {where}: {first['msg']}"
+                ),
+            }
+        )
+    return result
 
 
 def _post_to_board(board: dict, result: StepResult) -> None:
@@ -82,7 +114,7 @@ def run_plan(plan: QueryManifestV2) -> list[StepResult]:
                 ranking=step.ranking.model_dump() if step.ranking else None,
                 aggregation=step.aggregation,
             )
-            result = ADAPTERS[step.operation].run(ctx)
+            result = _check_output(ADAPTERS[step.operation].run(ctx))
             _post_to_board(board, result)
 
         done[step.step_id] = result

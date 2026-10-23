@@ -156,7 +156,7 @@ def _drug_evidence(total=3, fetched=3):
     return {
         "total_drug_count": total,
         "fetched_drug_count": fetched,
-        "drugs": [{}] * fetched,
+        "drugs": [{"exact_disease_match": False}] * fetched,
     }
 
 
@@ -236,7 +236,8 @@ def test_discover_then_target_drugs_queries_every_candidate():
 
 
 def _tractability(count=4):
-    return {"assessment_count": count, "assessments": [{}] * count}
+    assessment = {"modality": "SM", "label": "x", "value": False}
+    return {"assessment_count": count, "assessments": [assessment] * count}
 
 
 def test_discovered_targets_feed_both_drugs_and_tractability():
