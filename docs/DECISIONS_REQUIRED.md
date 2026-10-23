@@ -24,6 +24,13 @@ Engineering contributors must not silently decide these items.
 - How association and translational/drug support are combined.
 - Definitions of tractability, clinical maturity, selectivity, and acceptable ADMET evidence.
 - Sources required for approval claims.
+- Approve or replace the provisional `provisional_v0` translation layers
+  (`execution/analysis.py`): `translational_support` means at least one known-drug
+  record or at least one tractability assessment with value true; `undetermined`
+  means a required evidence source is missing for the target; otherwise
+  `disease_association_only`. No thresholds or scores are applied.
+- Whether `retrieve_target_drugs` must also query ChEMBL. The planner lists
+  `chembl` as a source, but the adapter currently queries Open Targets only.
 
 ## Data governance
 
