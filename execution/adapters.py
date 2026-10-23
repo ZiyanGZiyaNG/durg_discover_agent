@@ -10,6 +10,7 @@ from query_opentargets import (
     get_target_tractability_by_id,
     resolve_entity,
 )
+from execution.analysis import rank_rows
 
 
 class ResolveEntityAdapter:
@@ -329,6 +330,51 @@ class RetrieveTractabilityAdapter:
         )
 
 
+class RankTargetsAdapter:
+    source = "local_analysis"
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        evidence = ctx.board.get("stratified_target_evidence") or ctx.board.get(
+            "target_candidates"
+        )
+        problem = None
+        if ctx.ranking is None:
+            problem = "rank_targets needs a ranking spec"
+        elif not evidence:
+            problem = (
+                "rank_targets needs stratified_target_evidence or target_candidates"
+            )
+        ranked: list[dict] = []
+        if problem is None:
+            try:
+                ranked = rank_rows(
+                    evidence.get("targets", []),
+                    ctx.ranking["primary_metric"],
+                    ctx.ranking["direction"],
+                    ctx.ranking.get("secondary_metrics"),
+                )
+            except ValueError as exc:
+                problem = str(exc)
+        if problem is not None:
+            return StepResult(
+                step_id=ctx.step_id,
+                operation=ctx.operation,
+                status="error",
+                source=self.source,
+                error=problem,
+                elapsed_seconds=time.monotonic() - start,
+            )
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status="success" if ranked else "no_records",
+            source=self.source,
+            payload={**evidence, "targets": ranked, "ranking_spec": ctx.ranking},
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+
 ADAPTERS: dict[str, Adapter] = {
     "resolve_disease": ResolveEntityAdapter("disease", "resolved_disease"),
     "resolve_target": ResolveEntityAdapter("target", "resolved_target"),
@@ -336,4 +382,5 @@ ADAPTERS: dict[str, Adapter] = {
     "discover_targets": DiscoverTargetsAdapter(),
     "retrieve_target_drugs": RetrieveTargetDrugsAdapter(),
     "retrieve_tractability": RetrieveTractabilityAdapter(),
+    "rank_targets": RankTargetsAdapter(),
 }

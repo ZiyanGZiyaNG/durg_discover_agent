@@ -1,11 +1,13 @@
 from __future__ import annotations
 from operator import itemgetter
 from typing import Any
+
+
 def rank_rows(
-        rows: list[dict[str, Any]],
-        primary_metric: str,
-        direction: str,
-        secondary_metrics: list[str] | None = None,
+    rows: list[dict[str, Any]],
+    primary_metric: str,
+    direction: str,
+    secondary_metrics: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     if direction not in {"ascending", "descending"}:
         raise ValueError(f"unknown direction: {direction!r}")
