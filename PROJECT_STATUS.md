@@ -882,3 +882,77 @@ Four regression tests cover direction resolution, reduced context, adaptive
 retry feedback, and repeated-failure termination. The complete suite now passes
 150 tests in 1.73 seconds, with only the existing harmless pytest cache warning.
 The revised dependency prompt has not yet been tested with the real model.
+
+## P1: deterministic normalization before model repair (automated tests complete)
+
+Offline replay of the 76 recorded attempts under `outputs/plans` showed that
+the model was repeatedly asked to fix defects whose answer is already fixed by
+OPERATION_TABLE. Of the 21 schema-invalid attempts, 10 were timeouts; of the
+109 blocking general-rule findings on the 43 schema-valid candidates, 23 were
+missing required safeguards and 21 were analysis steps repeating data sources.
+Only 2 concerned missing upstream inputs, and one rejected attempt was a
+reversed `stratify -> rank` dependency.
+
+Python now normalizes these before validation, in both the full-Plan path and
+patch merge, and records each change in `corrected_model_claims`:
+
+- `dependency_inference.py`: adds a missing `depends_on` edge when exactly one
+  step provides the required capability (several producers are resolved only by
+  `entity_refs` overlap, otherwise reported as `not inferred`); removes an edge
+  only when the contract proves it reversed; reorders steps so dependencies
+  come first. It never invents steps and never reads an acceptance rubric.
+- `contract_normalization.py`: adds safeguards required by the operations in the
+  plan, and removes analysis-step `sources` that upstream retrieval steps already
+  declare. Metrics, filters, thresholds and operation choice stay model-owned.
+
+Replay of the 43 schema-valid historical candidates: blocking findings fell
+from 109 to 69 (required safeguards 23 to 0, analysis sources 21 to 4); no
+candidate became invalid. Remaining findings are metric/filter review (46),
+capability contracts (11), entity grounding (6) and missing producers (2). No
+real-model run was made, so latency under NVIDIA NIM is still unmeasured.
+
+Automated regression: 194 passed. Three tests fail on a Linux checkout for
+environmental reasons that predate this change (two assert Windows path
+separators; one needs the Ollama executable). `test_equal_quality_patch_does_not_replace_the_better_repair_base`
+now uses an unsupported filter instead of analysis sources, because Python
+resolves the latter.
+
+Run reports now include `run_settings` (provider, model ID, base URL or
+Ollama context, temperature, attempt/total timeouts, max attempts; never API
+keys) so results from different models can be compared. Automated regression:
+196 passed, with the same three environment-dependent failures.
+
+First real-model baseline on NVIDIA NIM (`nvidia/nemotron-3.5-super-vl-120b-a12b`,
+temperature 0, `pdac_known_targets`, report
+`outputs/plans/p1_nim_super35vl_pdac_v1.report.json`): passed after four
+attempts in 457.9 seconds (Qwen/Ollama runs on this case: 1075 to 1673 seconds,
+several without a final Plan). Attempt 1 (205 seconds) was lost entirely to a
+model-invented `manifest_id` that was not a valid UUID; runtime metadata
+(`schema_version`, `manifest_id`, `generated_at`, `created_before_retrieval`)
+is now dropped from model output and assigned by the program. Contract
+normalization removed duplicated analysis sources in attempt 2. Two repair
+attempts (about 106 seconds) went to `filters` that merely restated the disease
+(`disease_mention`, `disease`); this was seen once, so no rule was added.
+Retrieval tools executed: none.
+
+Three-run baseline after the runtime-field fix (NIM
+`nvidia/nemotron-3.5-super-vl-120b-a12b`, temperature 0, `pdac_known_targets`,
+reports `outputs/plans/p1b_nim_super35vl_pdac_run{1,2,3}.report.json`): 3 of 3
+passed in 362, 198 and 253 seconds (mean 271) with 3, 2 and 2 attempts. The first
+full Plan always takes 152 to 184 seconds (6,000 to 9,000 output tokens); a repair
+patch takes 20 to 101 seconds. Two avoidable costs were observed. Run 1's first
+attempt (184 seconds) failed because the model wrote `"filters": null`; null step
+fields now become their empty defaults (or are treated as omitted in a patch, so
+the existing step keeps its value). In all three runs the first Plan lacked the
+`target_translation_layer` key in the stratification step's `aggregation`, which
+the hidden rubric requires and the model-facing operation catalog does not name;
+whether to publish that key as part of the operation contract is an open
+decision. Automated regression: 202 passed, with the same three
+environment-dependent failures.
+
+## P1：雲端服務重試與逾時政策
+
+- 單次呼叫內重試暫時性服務錯誤（HTTP 429/500/502/503/504、連線錯誤、API 逾時），最多 `PLANNER_SERVICE_RETRIES`（預設 3）次，等待 `PLANNER_SERVICE_RETRY_BASE_SECONDS`（預設 5）× 4^n 秒；404/401/403 等永久錯誤不重試。
+- 非 Ollama provider 逾時後不終止整個 run：沿用同一份修補回饋再試；Ollama 維持逾時即停止（需清理本機模型）。
+- 建議雲端批次設定：`PLANNER_ATTEMPT_TIMEOUT_SECONDS=600`、`PLANNER_TOTAL_TIMEOUT_SECONDS=1800`。
+- 測試：`tests/test_service_retry.py`（6 項）。

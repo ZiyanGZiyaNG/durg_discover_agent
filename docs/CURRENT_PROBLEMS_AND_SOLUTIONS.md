@@ -26,7 +26,7 @@
 
 **Observed:** Qwen/Ollama runs have ranged from minutes to stalled runs. Timeouts, checkpointing, cleanup, direct one-call generation, and local patches are implemented, but the latest dependency-only prompt still needs a representative real-model test.
 
-**Solution:** Route fixed questions to deterministic manifests. Use the LLM only for genuinely multi-step planning. Repair only the failing portion, preserve accepted capabilities, and replay historical failures offline before another real-model run.
+**Solution:** Python first normalizes what OPERATION_TABLE already decides (missing edges, reversed edges, step order, required safeguards, duplicated analysis sources; see `dependency_inference.py` and `contract_normalization.py`). Route fixed questions to deterministic manifests. Use the LLM only for genuinely multi-step planning. Repair only the failing portion, preserve accepted capabilities, and replay historical failures offline before another real-model run.
 
 ## 5. Planner acceptance is not scientific acceptance
 

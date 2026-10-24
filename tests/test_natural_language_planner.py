@@ -960,13 +960,16 @@ def test_repair_catalog_contains_relevant_operations_not_the_full_table():
 
 
 def test_equal_quality_patch_does_not_replace_the_better_repair_base():
+    # An unsupported filter stays model-owned; duplicated analysis sources and
+    # missing safeguards are now normalized by Python and no longer qualify.
+    unsupported_filter = {"association_type": "therapeutic"}
     broken = _valid_payload()
-    broken["plan_steps"][4]["sources"] = ["open_targets"]
+    broken["plan_steps"][4]["filters"] = unsupported_filter
     broken["plan_steps"][4]["aggregation"] = None
     fixes_sources_only = _valid_payload()["plan_steps"][4]
     fixes_sources_only["aggregation"] = None
     trades_one_error_for_another = _valid_payload()["plan_steps"][4]
-    trades_one_error_for_another["sources"] = ["open_targets"]
+    trades_one_error_for_another["filters"] = unsupported_filter
 
     report = NaturalLanguageResearchPlanner(
         agent=FakeAgent([{"structured_response": broken}]),
@@ -1125,6 +1128,7 @@ def test_attempt_timeout_saves_failure_and_does_not_start_repair(tmp_path, monke
             time.sleep(0.1)
             return {"structured_response": _valid_payload()}
 
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
     monkeypatch.setenv("PLANNER_ATTEMPT_TIMEOUT_SECONDS", "0.01")
     monkeypatch.setenv("PLANNER_TOTAL_TIMEOUT_SECONDS", "0.05")
     checkpoint_path = tmp_path / "timeout.report.json"
@@ -1161,6 +1165,7 @@ def test_attempt_timeout_records_ollama_cleanup_outcome(tmp_path, monkeypatch):
             "ollama_cleanup_error": None,
         }
 
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
     monkeypatch.setenv("PLANNER_ATTEMPT_TIMEOUT_SECONDS", "0.01")
     monkeypatch.setenv("PLANNER_TOTAL_TIMEOUT_SECONDS", "0.05")
     report = NaturalLanguageResearchPlanner(

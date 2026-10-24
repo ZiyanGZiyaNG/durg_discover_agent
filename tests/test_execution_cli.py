@@ -24,3 +24,26 @@ def test_cli_reports_a_refused_plan_without_running_anything(capsys):
     code = main(["outputs/plans/acceptance_pdac_known_targets.json"])
     assert code == 2
     assert "refused" in capsys.readouterr().out
+
+
+def test_cli_lists_every_tool_call_only_when_asked(capsys):
+    def run(extra):
+        with (
+            patch("execution.adapters.resolve_entity", _fake_resolve),
+            patch(
+                "execution.adapters.discover_disease_targets", lambda *a, **k: FOUND
+            ),
+            patch("execution.adapters.get_target_drug_evidence_by_ids", _drugs),
+            patch("execution.adapters.get_target_tractability_by_id", _tractability),
+        ):
+            main([PLAN, "--disease-id", "EFO_1", *extra])
+        return capsys.readouterr().out
+
+    quiet = run([])
+    assert "tool calls" not in quiet
+
+    out = run(["--show-calls"])
+    assert "tool calls: 8" in out
+    assert "get_target_drug_evidence_by_ids('T3', 'EFO_1')" in out
+    assert "get_target_tractability_by_id('T1')" in out
+    assert out.count("get_target_tractability_by_id(") == 3

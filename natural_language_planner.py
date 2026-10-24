@@ -19,7 +19,7 @@ from uuid import UUID
 from langchain_core.callbacks import BaseCallbackHandler
 from pydantic import BaseModel, Field, model_validator
 
-from model_factory import get_chat_model, get_ollama_settings
+from model_factory import describe_llm_settings, get_chat_model, get_ollama_settings
 from planner_acceptance import (
     PlanAcceptanceResult,
     PlannerAcceptanceCase,
@@ -41,6 +41,15 @@ from schemas import (
 from planner_examples import build_few_shot_prompt
 from operation_rules import (
     OperationRuleEvaluation, evaluate_operation_rules, build_metric_catalog_prompt,
+)
+from contract_normalization import (
+    drop_program_owned_fields,
+    fill_null_step_defaults,
+    normalize_contract_fields,
+)
+from dependency_inference import (
+    apply_to_payload as infer_payload_dependencies,
+    infer_step_dependencies,
 )
 
 
@@ -295,6 +304,31 @@ def _complete_existing_step_upserts(
     return corrections
 
 
+_TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
+_TRANSIENT_ERROR_NAMES = {"APIConnectionError", "APITimeoutError"}
+
+
+def _is_transient_service_error(exc: BaseException) -> bool:
+    if getattr(exc, "status_code", None) in _TRANSIENT_STATUS_CODES:
+        return True
+    return any(cls.__name__ in _TRANSIENT_ERROR_NAMES for cls in type(exc).__mro__)
+
+
+def _invoke_model_with_service_retry(
+    model: Any, messages: list, config: dict | None
+) -> Any:
+    """Retry a temporary service failure inside one attempt; other errors propagate."""
+    retries = int(os.getenv("PLANNER_SERVICE_RETRIES", "3"))
+    base_seconds = float(os.getenv("PLANNER_SERVICE_RETRY_BASE_SECONDS", "5"))
+    for retry in range(retries + 1):
+        try:
+            return model.invoke(messages, config=config)
+        except Exception as exc:
+            if retry == retries or not _is_transient_service_error(exc):
+                raise
+            time.sleep(base_seconds * 4**retry)  # 5, 20, 80 seconds
+
+
 class DirectJsonPlanAgent:
     """One full-Plan model invocation followed by deterministic validation."""
 
@@ -314,9 +348,13 @@ class DirectJsonPlanAgent:
             },
             *request.get("messages", []),
         ]
-        response = self._model.invoke(messages, config=config)
+        response = _invoke_model_with_service_retry(self._model, messages, config)
         payload = _extract_manifest_payload(_message_text(response))
-        corrections = _normalize_dependency_output_refs(payload)
+        corrections = drop_program_owned_fields(payload)
+        corrections.extend(fill_null_step_defaults(payload.get("plan_steps")))
+        corrections.extend(_normalize_dependency_output_refs(payload))
+        corrections.extend(infer_payload_dependencies(payload))
+        corrections.extend(normalize_contract_fields(payload))
         plan = QueryManifestV2.model_validate(payload)
         plan._reference_corrections.extend(corrections)
         return {"structured_response": plan, "messages": [response]}
@@ -346,9 +384,10 @@ class DirectJsonPatchAgent:
             },
             *request.get("messages", []),
         ]
-        response = self._model.invoke(messages, config=config)
+        response = _invoke_model_with_service_retry(self._model, messages, config)
         payload = _extract_patch_payload(_message_text(response))
-        corrections = _complete_existing_step_upserts(
+        null_notes = fill_null_step_defaults(payload.get("upsert_steps"), omit=True)
+        corrections = null_notes + _complete_existing_step_upserts(
             payload, request.get("base_plan")
         )
         patch = QueryManifestPatch.model_validate(payload)
@@ -429,9 +468,11 @@ def apply_manifest_patch(
             # otherwise useful patch because the model supplied stale metadata.
         else:
             step_order = patch.step_order
-    payload["plan_steps"] = _stable_dependency_order(
+    inferred_steps, dependency_notes, unresolved_dependencies = infer_step_dependencies(
         [step_map[item] for item in step_order]
     )
+    payload["plan_steps"] = _stable_dependency_order(inferred_steps)
+    contract_notes = normalize_contract_fields(payload)
 
     for field in (
         "research_objective",
@@ -443,7 +484,13 @@ def apply_manifest_patch(
         value = getattr(patch, field)
         if value is not None:
             payload[field] = value.model_dump() if hasattr(value, "model_dump") else value
-    return QueryManifestV2.model_validate(payload)
+    merged = QueryManifestV2.model_validate(payload)
+    merged._reference_corrections.extend(
+        dependency_notes
+        + [f"not inferred: {item}" for item in unresolved_dependencies]
+        + contract_notes
+    )
+    return merged
 
 
 class RepairScope(BaseModel):
@@ -1138,6 +1185,8 @@ class PlannerRunReport(BaseModel):
     evidence_collection_started: Literal[False] = False
     executed_retrieval_tools: list[str] = Field(default_factory=list)
     generated_at: datetime
+    # Non-secret provider/model/timeout settings so runs can be compared later.
+    run_settings: dict[str, Any] = Field(default_factory=dict)
 
 
 def _ollama_executable() -> str | None:
@@ -1425,6 +1474,12 @@ class NaturalLanguageResearchPlanner:
                 if initial_plan is not None else max(0, len(attempts) - 1),
                 total_duration_seconds=perf_counter() - run_started,
                 generated_at=datetime.now(timezone.utc),
+                run_settings={
+                    **describe_llm_settings(),
+                    "attempt_timeout_seconds": attempt_timeout,
+                    "total_timeout_seconds": total_timeout,
+                    "max_attempts": max_attempts,
+                },
             )
 
         def save_checkpoint(status: Literal["running", "passed", "failed"]):
@@ -1433,6 +1488,11 @@ class NaturalLanguageResearchPlanner:
             path = Path(checkpoint_path)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(make_report(status).model_dump_json(indent=2), encoding="utf-8")
+
+        # A hosted API has no local model to clean up, so one slow call need not end the run.
+        continue_after_timeout = (
+            os.getenv("LLM_PROVIDER", "ollama").strip().lower() != "ollama"
+        )
 
         for attempt_number in range(1, max_attempts + 1):
             remaining_total = total_timeout - (perf_counter() - run_started)
@@ -1713,17 +1773,22 @@ class NaturalLanguageResearchPlanner:
                     for key, value in exc.cleanup.items():
                         if hasattr(diagnostic, key):
                             setattr(diagnostic, key, value)
-                exception_feedback = RepairFeedback(
-                    incorrect=[
-                        {
-                            "area": "schema_or_integrity",
-                            "problem": str(exc),
-                            "required_correction": "修正指定錯誤並保留原始問題。",
-                        }
-                    ]
-                )
-                feedback = _merge_feedback(base_feedback or feedback, exception_feedback)
-                diagnostic.repair_feedback_sent_next = feedback
+                if isinstance(exc, ModelAttemptTimeout) and continue_after_timeout:
+                    # Not a model mistake: ask for the same repair again.
+                    feedback = base_feedback or feedback
+                else:
+                    exception_feedback = RepairFeedback(
+                        incorrect=[
+                            {
+                                "area": "schema_or_integrity",
+                                "problem": str(exc),
+                                "required_correction": "修正指定錯誤並保留原始問題。",
+                            }
+                        ]
+                    )
+                    feedback = _merge_feedback(base_feedback or feedback, exception_feedback)
+                if feedback is not None:
+                    diagnostic.repair_feedback_sent_next = feedback
             finally:
                 if call_trace:
                     diagnostic.model_calls = call_trace.snapshot()
@@ -1743,7 +1808,7 @@ class NaturalLanguageResearchPlanner:
                     else:
                         seen_patch_failure_fingerprints.add(failure_fingerprint)
                 attempts.append(diagnostic)
-                timed_out = diagnostic.model_generation_timeout
+                timed_out = diagnostic.model_generation_timeout and not continue_after_timeout
                 save_checkpoint("failed" if timed_out else "running")
             if final_plan is not None:
                 break

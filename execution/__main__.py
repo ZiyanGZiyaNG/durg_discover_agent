@@ -1,6 +1,6 @@
 """Run a saved QueryManifestV2 plan and print a short report.
 
-python -m execution PLAN.json [--disease-id MONDO_0021040]
+python -m execution PLAN.json [--disease-id MONDO_0021040] [--show-calls]
 """
 
 from __future__ import annotations
@@ -10,8 +10,32 @@ import json
 import sys
 from pathlib import Path
 
+from execution import adapters
 from execution.compiler import FAILED, PlanRefusedError, run_plan
 from schemas import QueryManifestV2
+
+TOOLS = (
+    "resolve_entity",
+    "discover_disease_targets",
+    "get_disease_target_evidence_by_ids",
+    "get_target_drug_evidence_by_ids",
+    "get_target_tractability_by_id",
+)
+
+
+def _logged(name, tool, log):
+    def call(*args, **kwargs):
+        shown = [repr(a) for a in args] + [f"{k}={v!r}" for k, v in kwargs.items()]
+        log.append((name, f"{name}({', '.join(shown)})"))
+        return tool(*args, **kwargs)
+
+    return call
+
+
+def _record_tool_calls(log):
+    """Wrap every retrieval function so each call the compiler makes is listed."""
+    for name in TOOLS:
+        setattr(adapters, name, _logged(name, getattr(adapters, name), log))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -21,6 +45,11 @@ def main(argv: list[str] | None = None) -> int:
         "--disease-id",
         help="use this ID for the disease entity instead of resolving its name",
     )
+    parser.add_argument(
+        "--show-calls",
+        action="store_true",
+        help="list every tool call the compiler made",
+    )
     args = parser.parse_args(argv)
 
     plan = QueryManifestV2.model_validate(json.loads(args.plan.read_text()))
@@ -28,6 +57,10 @@ def main(argv: list[str] | None = None) -> int:
         for entity in plan.entities:
             if entity.entity_type == "disease":
                 entity.entity_id = args.disease_id
+
+    calls: list[tuple[str, str]] = []
+    if args.show_calls:
+        _record_tool_calls(calls)
 
     try:
         trace = run_plan(plan)
@@ -45,6 +78,16 @@ def main(argv: list[str] | None = None) -> int:
             f"{result.status:<16}{result.elapsed_seconds:>5.1f}"
         )
     print(f"total {sum(r.elapsed_seconds for r in trace):.1f} s")
+
+    if args.show_calls:
+        counts: dict[str, int] = {}
+        for name, _ in calls:
+            counts[name] = counts.get(name, 0) + 1
+        summary = ", ".join(f"{name} x{n}" for name, n in counts.items())
+        print()
+        print(f"tool calls: {len(calls)}  ({summary})")
+        for number, (_, shown) in enumerate(calls, 1):
+            print(f"{number:>3}  {shown}")
 
     payload = trace[-1].payload
     if isinstance(payload, dict) and payload.get("targets"):

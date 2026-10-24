@@ -124,3 +124,28 @@ def get_chat_model() -> Any:
         f"Unsupported LLM_PROVIDER={provider!r}. "
         "Choose 'ollama', 'anthropic' or 'nim'."
     )
+
+
+def describe_llm_settings() -> dict[str, Any]:
+    """Non-secret description of the configured backend for run reports.
+
+    API keys are never included. Values mirror what ``get_chat_model`` uses.
+    """
+
+    provider = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
+    info: dict[str, Any] = {
+        "provider": provider,
+        "temperature": os.getenv("LLM_TEMPERATURE", "0"),
+    }
+    if provider == "nim":
+        info["model"] = os.getenv("NIM_MODEL", "meta/llama-3.1-70b-instruct")
+        info["base_url"] = os.getenv("NIM_BASE_URL") or "https://integrate.api.nvidia.com/v1"
+    elif provider == "anthropic":
+        info["model"] = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+    elif provider == "ollama":
+        try:
+            info["model"], info["num_ctx"] = get_ollama_settings()
+            info["num_predict"] = get_ollama_num_predict()
+        except ValueError as exc:
+            info["configuration_error"] = str(exc)
+    return info

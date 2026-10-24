@@ -1,6 +1,6 @@
 import pytest
 
-from model_factory import get_ollama_num_predict, get_ollama_settings
+from model_factory import describe_llm_settings, get_ollama_num_predict, get_ollama_settings
 
 
 @pytest.mark.parametrize(
@@ -46,3 +46,24 @@ def test_ollama_generation_limit_rejects_tiny_values(monkeypatch):
     monkeypatch.setenv("OLLAMA_NUM_PREDICT", "100")
     with pytest.raises(ValueError, match="at least 256"):
         get_ollama_num_predict()
+
+
+def test_describe_llm_settings_reports_model_without_secrets(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "nim")
+    monkeypatch.setenv("NIM_MODEL", "nvidia/example-model")
+    monkeypatch.setenv("NIM_API_KEY", "nvapi-secret-value")
+    monkeypatch.delenv("NIM_BASE_URL", raising=False)
+    info = describe_llm_settings()
+    assert info["provider"] == "nim"
+    assert info["model"] == "nvidia/example-model"
+    assert info["base_url"] == "https://integrate.api.nvidia.com/v1"
+    assert "secret" not in str(info)
+
+
+def test_describe_llm_settings_for_ollama_uses_profile(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_PROFILE", "lightweight")
+    monkeypatch.delenv("OLLAMA_MODEL", raising=False)
+    monkeypatch.delenv("OLLAMA_NUM_CTX", raising=False)
+    info = describe_llm_settings()
+    assert (info["model"], info["num_ctx"]) == ("qwen3:8b", 4096)
