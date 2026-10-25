@@ -9,6 +9,7 @@ from query_opentargets import (
     get_target_drug_evidence_by_ids,
     get_target_tractability_by_id,
     resolve_entity,
+    resolve_mention,
 )
 from execution.analysis import RULE_NOTE, RULE_VERSION, rank_rows, stratify_targets
 
@@ -40,8 +41,11 @@ class ResolveEntityAdapter:
         resolved: dict[str, dict] = {}
         try:
             for ref, entity in mentions.items():
-                resolved[ref] = resolve_entity(
-                    entity["mention"], self.entity_type, entity.get("entity_id")
+                resolved[ref] = resolve_mention(
+                    entity["mention"],
+                    self.entity_type,
+                    entity.get("entity_id"),
+                    resolver=resolve_entity,
                 )
         except OpenTargetsError as exc:
             return StepResult(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from functools import lru_cache
 from typing import Any
 
@@ -116,6 +117,10 @@ query TypeFields($typeName: String!) {
 
 class OpenTargetsError(RuntimeError):
     """Raised when Open Targets cannot return a usable response."""
+
+
+class EntityNotFoundError(OpenTargetsError):
+    """Raised when no Open Targets entity matches the query."""
 
 
 def _session() -> requests.Session:
@@ -351,11 +356,11 @@ def resolve_entity(
         if entity == "disease":
             record = (_graphql(DISEASE_IDENTITY_QUERY, {"efoId": entity_id}).get("disease"))
             if not record:
-                raise OpenTargetsError(f"Disease ID not found: {entity_id}")
+                raise EntityNotFoundError(f"Disease ID not found: {entity_id}")
             return {"id": record["id"], "name": record["name"], "symbol": ""}
         record = (_graphql(TARGET_IDENTITY_QUERY, {"ensemblId": entity_id}).get("target"))
         if not record:
-            raise OpenTargetsError(f"Target ID not found: {entity_id}")
+            raise EntityNotFoundError(f"Target ID not found: {entity_id}")
         return {
             "id": record["id"],
             "name": record.get("approvedName") or record.get("approvedSymbol") or "",
@@ -370,9 +375,55 @@ def resolve_entity(
     ]
     if len(exact) != 1:
         if not candidates:
-            raise OpenTargetsError(f"{entity.title()} not found: {name}")
+            raise EntityNotFoundError(f"{entity.title()} not found: {name}")
         raise EntityResolutionError(name, entity, candidates)
     return {**exact[0], "symbol": name if entity == "target" else ""}
+
+
+def mention_variants(mention: str) -> list[str]:
+    """Search strings for one mention: the whole text, then the names inside
+    brackets, then the text outside them (Open Targets search is English)."""
+    inside = [
+        part.strip()
+        for group in re.findall(r"[（(]([^）)]*)[）)]", mention)
+        for part in re.split(r"[,，;；/]", group)
+    ]
+    outside = re.sub(r"[（(][^）)]*[）)]", " ", mention).strip()
+    ordered = [mention.strip(), *inside, outside]
+    return list(dict.fromkeys(item for item in ordered if item))
+
+
+def resolve_mention(
+    name: str,
+    entity: str,
+    entity_id: str | None = None,
+    resolver=None,
+) -> dict[str, str]:
+    """Resolve a mention, trying its variants until one matches uniquely.
+
+    An explicit ID is used as given. Ambiguous or missing matches are never
+    guessed: candidates from every variant are reported instead.
+    """
+    if resolver is None:
+        resolver = resolve_entity
+    if entity_id:
+        return resolver(name, entity, entity_id)
+    candidates: list[dict[str, str]] = []
+    tried: list[str] = []
+    for variant in mention_variants(name):
+        tried.append(variant)
+        try:
+            return resolver(variant, entity, None)
+        except EntityResolutionError as exc:
+            candidates.extend(exc.candidates)
+        except EntityNotFoundError:
+            continue
+    if candidates:
+        unique = list({item["id"]: item for item in candidates}.values())
+        raise EntityResolutionError(name, entity, unique)
+    raise EntityNotFoundError(
+        f"{entity.title()} not found: {name} (tried: {', '.join(tried)})"
+    )
 
 
 def get_efo_id(disease_name: str) -> str | None:
