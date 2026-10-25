@@ -105,6 +105,11 @@ RULE_TABLE: dict[str, OperationRuleDefinition] = {
             "已知 operation 必須填齊其必要結構，且不得聲稱其他 operation 專屬的輸出能力。"
         ),
     ),
+    "inputs_must_reference_upstream_outputs": OperationRuleDefinition(
+        rule_id="inputs_must_reference_upstream_outputs",
+        severity="hard_error",
+        description_zh_tw="step.inputs 只能引用上游步驟已宣告在 outputs 的名稱。",
+    ),
 }
 
 
@@ -275,6 +280,19 @@ def evaluate_operation_rules(plan: QueryManifestV2) -> OperationRuleEvaluation:
             ))
 
     for step in plan.plan_steps:
+        ancestor_outputs = {
+            ancestor.step_id: set(ancestor.outputs)
+            for ancestor in _ancestor_steps(plan, step)
+        }
+        for input_name, ref in step.inputs.items():
+            if ref.output not in ancestor_outputs.get(ref.step_id, set()):
+                findings.append(_finding(
+                    "inputs_must_reference_upstream_outputs", step,
+                    f"input {input_name!r} 引用了不存在的上游輸出 {ref.step_id}.{ref.output}。",
+                    "改引用 depends_on 鏈上某個步驟已宣告在 outputs 的名稱。",
+                    [f"{ref.step_id}.{ref.output}"],
+                ))
+
         contract = OPERATION_TABLE.get(step.operation)
         if contract is None:
             continue

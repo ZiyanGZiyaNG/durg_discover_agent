@@ -36,6 +36,8 @@ class StepContext(BaseModel):
     filters: dict[str, Any] = Field(default_factory=dict)
     ranking: dict[str, Any] | None = None
     aggregation: dict[str, Any] | None = None
+    board: dict[str, Any] = Field(default_factory=dict)
+    inputs: dict[str, Any] = Field(default_factory=dict)
 
 
 class Adapter(Protocol):

@@ -3,6 +3,7 @@ from __future__ import annotations
 from execution.adapters import ADAPTERS
 from execution.contracts import StepContext, StepResult
 from execution.records import OUTPUT_MODELS
+from execution.board import Board, MissingInput
 from planner_acceptance import OPERATION_TABLE
 from pydantic import ValidationError
 from schemas import QueryManifestV2
@@ -45,6 +46,9 @@ def _missing(operation: str, board: dict) -> list[str]:
     return missing
 
 
+
+
+
 def _check_output(result: StepResult) -> StepResult:
     """An adapter whose payload breaks its operation's model is an error step."""
     if result.status not in HAS_PAYLOAD:
@@ -82,6 +86,7 @@ def run_plan(plan: QueryManifestV2) -> list[StepResult]:
     if problems:
         raise PlanRefusedError(problems)
 
+    step_board = Board()
     entities = {entity.entity_ref: entity.model_dump() for entity in plan.entities}
     board: dict = {}
     done: dict[str, StepResult] = {}
@@ -89,7 +94,14 @@ def run_plan(plan: QueryManifestV2) -> list[StepResult]:
 
     for step in plan.plan_steps:
         failed_deps = [d for d in step.depends_on if done[d].status in FAILED]
-        missing = _missing(step.operation, board)
+        inputs: dict = {}
+        missing_inputs: list[str] = []
+        for name, ref in step.inputs.items():
+            try:
+                inputs[name] = step_board.get(ref)
+            except MissingInput:
+                missing_inputs.append(f"input {ref.step_id}.{ref.output}")
+        missing = _missing(step.operation, board) + missing_inputs
 
         if failed_deps or missing:
             reason = (
@@ -113,9 +125,13 @@ def run_plan(plan: QueryManifestV2) -> list[StepResult]:
                 filters=step.filters,
                 ranking=step.ranking.model_dump() if step.ranking else None,
                 aggregation=step.aggregation,
+                inputs=inputs,
             )
             result = _check_output(ADAPTERS[step.operation].run(ctx))
             _post_to_board(board, result)
+            if result.status in HAS_PAYLOAD:
+                for output in step.outputs:
+                    step_board.put(step.step_id, output, result.payload)
 
         done[step.step_id] = result
         trace.append(result)

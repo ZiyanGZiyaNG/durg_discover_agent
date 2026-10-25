@@ -211,6 +211,12 @@ class RankingSpecV2(BaseModel):
                 }
         return normalized
 
+class StepInputRef(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    step_id: str = Field(min_length=1)
+    output: str = Field(min_length=1)
+
+
 
 class ResearchPlanStepV2(BaseModel):
     """One executable or analytical operation in a research plan."""
@@ -233,6 +239,8 @@ class ResearchPlanStepV2(BaseModel):
     ranking: RankingSpecV2 | None = None
     aggregation: dict[str, Any] | None = None
     safeguards: list[str] = Field(default_factory=list)
+    provides: list[str] = []
+    inputs: dict[str, StepInputRef] = {}
 
     @model_validator(mode="after")
     def validate_operation_review_state(self) -> "ResearchPlanStepV2":
@@ -250,6 +258,13 @@ class ResearchPlanStepV2(BaseModel):
                 "approved operations cannot include proposal fields"
             )
         return self
+
+
+class EntityResolution(BaseModel):
+    status: Literal["verified", "ambiguous", "unresolved"]
+    entity_id: str | None = None
+    canonical_name: str | None = None
+    candidates: list[dict[str, str]] = Field(default_factory=list)
 
 
 class QueryCharacteristicsV2(BaseModel):

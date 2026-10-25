@@ -15,10 +15,10 @@ def _rule_ids(result):
     return {item.rule_id for item in result.findings}
 
 
-def test_rule_table_has_seven_blocking_and_three_warning_rules():
-    assert len(RULE_TABLE) == 10
+def test_rule_table_has_eight_blocking_and_three_warning_rules():
+    assert len(RULE_TABLE) == 11
     assert sum(rule.severity == "warning" for rule in RULE_TABLE.values()) == 3
-    assert sum(rule.severity != "warning" for rule in RULE_TABLE.values()) == 7
+    assert sum(rule.severity != "warning" for rule in RULE_TABLE.values()) == 8
 
 
 def test_complete_therapeutic_target_plan_passes_general_rules():
