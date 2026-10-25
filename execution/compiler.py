@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from execution.adapters import ADAPTERS
 from execution.contracts import StepContext, StepResult
-from execution.records import OUTPUT_MODELS
+from execution.records import OUTPUT_MODELS, AssociationRow, StratifiedRow
 from execution.board import Board, MissingInput
 from planner_acceptance import OPERATION_TABLE
 from pydantic import ValidationError
@@ -35,6 +35,8 @@ def check_plan(plan: QueryManifestV2) -> list[str]:
             problems.append(f"{step.step_id}: unknown operation {step.operation!r}")
         elif step.operation not in ADAPTERS:
             problems.append(f"{step.step_id}: no adapter for {step.operation!r}")
+        else:
+            problems.extend(_check_step_contract(plan, step))
     return problems
 
 
@@ -44,6 +46,55 @@ def _missing(operation: str, board: dict) -> list[str]:
     if entry.requires_any and not any(cap in board for cap in entry.requires_any):
         missing.append("one of " + "/".join(entry.requires_any))
     return missing
+
+REQUDRED_AGGREGATION_KEYS = {
+    "stratify_target_evidence_layers": ["target_translation_layer"],
+}
+def _ancestor_operation(plan: QueryManifestV2, step) -> set[str]:
+    by_id = {item.step_id: item for item in plan.plan_steps}
+    seen: set[str] = set()
+    stack = list(step.depends_on)
+    while stack:
+        step_id = stack.pop()
+        if step_id in seen or step_id not in by_id:
+            continue
+        seen.add(step_id)
+        stack.extend(by_id[step_id].depends_on)
+    return {by_id[step_id].operation for step_id in seen}
+
+def _check_step_contract(plan: QueryManifestV2, step) -> list[str]:
+    problems = []
+    missing_keys = [
+        key
+        for key in REQUDRED_AGGREGATION_KEYS.get(step.operation, [])
+        if key not in (step.aggregation or {})
+    ]
+    if missing_keys:
+        problems.append(
+            f"{step.step_id}: {step.operation} needs aggregation keys {missing_keys}"
+        )
+
+    if step.operation == "rank_targets":
+        if step.ranking is None:
+            problems.append(f"{step.step_id}: rank_targets needs a ranking spec")
+            return problems
+        upstream = _ancestor_operation(plan, step)
+        if "stratify_target_evidence_layers" in upstream:
+            row_model = StratifiedRow
+        elif upstream & {"discover_targets", "discover_targets_per_disease"}:
+            row_model = AssociationRow
+        else:
+            return problems
+
+        available = set(row_model.model_fields)
+        metrics = [step.ranking.primary_metric, *step.ranking.secondary_metrics]
+        unknown = [metric for metric in metrics if metric not in available]
+        if unknown:
+            problems.append(
+                f"{step.step_id}: ranking metric(s) {unknown} are not produced"
+                f"upstream; availbale: {sorted(available)}"
+            )
+    return problems
 
 
 

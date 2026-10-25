@@ -7,6 +7,7 @@ import pytest
 from execution.compiler import PlanRefusedError, run_plan
 from schemas import QueryManifestV2
 from test_execution_acceptance import FOUND, _drugs, _fake_resolve, _tractability
+from execution.compiler import check_plan
 
 PLANS = Path(__file__).resolve().parent.parent / "outputs" / "plans"
 
@@ -46,13 +47,10 @@ def test_runs_to_the_end(name):
         ("pdac_direct_patch_transitive_refs_v1", "tractability_score"),
     ],
 )
-def test_stops_only_at_undefined_metric(name, missing_metric):
-    # Known gap: the metric's definition is waiting on a research-team decision.
-    trace = _run_saved(name)
-    assert [r.status for r in trace[:-1]] == ["success"] * (len(trace) - 1)
-    assert trace[-1].status == "error"
-    assert missing_metric in trace[-1].error
-
+def test_undefined_metric_is_refused_before_retrieval(name, missing_metric):
+    with pytest.raises(PlanRefusedError) as excinfo:
+        _run_saved(name)
+    assert any(missing_metric in problem for problem in excinfo.value.problems)
 
 def test_old_operation_names_are_refused_before_retrieval():
     # Written before the operation table existed: refused up front, nothing is queried.
@@ -91,3 +89,14 @@ def test_representative_manifest_produces_the_expected_tool_calls():
         call.get_target_tractability_by_id("T2"),
         call.get_target_tractability_by_id("T3"),
     ]
+
+
+def test_stratify_without_its_key_is_refused_before_retrieval():
+    plan = QueryManifestV2.model_validate(
+        json.loads((PLANS / "phase2_pdac_known_targets_batched_v4.json").read_text())
+    )
+
+    for step in plan.plan_steps:
+        if step.operation == "stratify_target_evidence_layers":
+            step.aggregation = {}
+    assert any("target_translation_layer" in p for p in check_plan(plan))
