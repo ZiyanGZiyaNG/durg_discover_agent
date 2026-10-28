@@ -118,6 +118,8 @@ class RankedTargets(_Record):
 OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "resolve_disease": ResolvedEntities,
     "resolve_target": ResolvedEntities,
+    "resolve_diseases": ResolvedEntities,
+    "resolve_targets": ResolvedEntities,
     "retrieve_exact_pair": ExactPairEvidence,
     "discover_targets": DiscoveredTargets,
     "discover_targets_per_disease": DiscoveredTargets,

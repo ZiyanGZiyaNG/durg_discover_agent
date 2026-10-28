@@ -438,6 +438,8 @@ class StratifyTargetEvidenceAdapter:
 
 ADAPTERS: dict[str, Adapter] = {
     "resolve_disease": ResolveEntityAdapter("disease", "resolved_disease"),
+    "resolve_diseases": ResolveEntityAdapter("disease", "resolved_disease"),
+    "resolve_targets": ResolveEntityAdapter("target", "resolved_target"),
     "resolve_target": ResolveEntityAdapter("target", "resolved_target"),
     "retrieve_exact_pair": RetrieveExactPairAdapter(),
     "discover_targets": DiscoverTargetsAdapter(),
