@@ -7,6 +7,7 @@ from execution.board import Board, MissingInput
 from planner_acceptance import OPERATION_TABLE
 from pydantic import ValidationError
 from schemas import QueryManifestV2
+from execution.analysis import normalize_filters
 
 FAILED = {"error", "not_executed"}
 HAS_PAYLOAD = {
@@ -62,6 +63,23 @@ def _ancestor_operation(plan: QueryManifestV2, step) -> set[str]:
         stack.extend(by_id[step_id].depends_on)
     return {by_id[step_id].operation for step_id in seen}
 
+DRUG_FIELDS = {"known_drug_count", "exact_disease_drug_count"}
+TRACTABILITY_FIELDS = {"tractable_bucket_count", "tractable_modalities"}
+
+def _filterable_fields(upstream: set[str]) -> set[str] | None:
+    if "stratify_target_evidence_layers" in upstream:
+        return set(StratifiedRow.model_fields)
+    if upstream & {"discover_targets", "discover_targets_per_disease"}:
+        fields = set(AssociationRow.model_fields)
+        if "retrieve_target_drugs" in upstream:
+            fields |= DRUG_FIELDS
+        if "retrieve_tractability" in upstream:
+            fields |= TRACTABILITY_FIELDS 
+        return fields
+    return None
+
+
+
 def _check_step_contract(plan: QueryManifestV2, step) -> list[str]:
     problems = []
     missing_keys = [
@@ -73,6 +91,25 @@ def _check_step_contract(plan: QueryManifestV2, step) -> list[str]:
         problems.append(
             f"{step.step_id}: {step.operation} needs aggregation keys {missing_keys}"
         )
+
+
+    if step.operation == "filter_targets":
+        if not step.filters:
+            problems.append(f"{step.step_id}: filter_targets needs filters")
+            return problems
+        try:
+            fields = {field for field, _, _ in normalize_filters(step.filters)}
+        except ValueError as exc:
+            problems.append(f"{step.step_id}: {exc}")
+            return problems
+        available = _filterable_fields(_ancestor_operation(plan, step))
+        if available is not None:
+            unknown = sorted(fields - available)
+            if unknown:
+                problems.append(
+                    f"{step.step_id}: filter field(s) {unknown} are not available "
+                    f"upstream; available: {sorted(available)}"
+                )
 
     if step.operation == "rank_targets":
         if step.ranking is None:
@@ -95,8 +132,6 @@ def _check_step_contract(plan: QueryManifestV2, step) -> list[str]:
                 f"upstream; availbale: {sorted(available)}"
             )
     return problems
-
-
 
 
 

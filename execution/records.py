@@ -114,6 +114,13 @@ class RankedTargets(_Record):
     ranking_spec: dict[str, Any]
 
 
+class FilteredTargets(_Record):
+    targets: list[RankedRow]
+    filter_spec: dict[str, Any]
+    excluded_target_ids: list[str]
+    unevaluable_target_ids: list[str]
+
+
 # operation -> the model its payload must satisfy (same keys as ADAPTERS)
 OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "resolve_disease": ResolvedEntities,
@@ -127,4 +134,5 @@ OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "retrieve_tractability": TractabilityEvidence,
     "stratify_target_evidence_layers": StratifiedEvidence,
     "rank_targets": RankedTargets,
+    "filter_targets": FilteredTargets,
 }

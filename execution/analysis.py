@@ -97,3 +97,77 @@ def stratify_targets(
             }
         )
     return stratified
+
+
+
+FILTER_OPERATORS = {"eq", "ne", "gt", "gte", "lt", "lte", "in", "contains"}
+_OPERATOR_ALIASES = {"min": "gte", "max": "lte"}
+
+
+def normalize_filters(filters: dict[str, Any]) -> list[tuple[str, str, Any]]:
+    """{field: {operator: value}} -> [(field, operator, value)].
+
+    A bare value means equality: "min"/"max" are accepted for gte/lte.
+    """
+
+    conditions = []
+    for field, condition in filters.items():
+        if not isinstance(condition, dict):
+            condition = {"eq": condition}
+        if not condition:
+            raise ValueError(f"filter on {field!r} has no operator")
+        for operator, expected in condition.items():
+            operator = _OPERATOR_ALIASES.get(operator, operator)
+            if operator not in FILTER_OPERATORS:
+                raise ValueError(f"unlnown filter operator {operator!r} on {field!r}")
+            if operator == "in" and not isinstance(expected, list):
+                raise ValueError(f"'in' on {field!r} needs a list")
+            conditions.append((field, operator, expected))
+    return conditions
+
+
+def _holds(value: Any, operator: str, expected: Any) -> bool:
+    if operator == "eq":
+        return value == expected
+    if operator == "ne":
+        return value != expected
+    if operator == "in":
+        return value in expected
+    if operator == "contains":
+        return expected in value
+    if operator == "gt":
+        return value > expected
+    if operator == "gte":
+        return value >= expected
+    if operator == "lt":
+        return value < expected
+    return value <= expected
+
+
+def filter_rows(
+        rows: list[dict[str, Any]], filters: dict[str, Any]
+) -> tuple[list[str], list[str], list[str]]:
+    """Return (kept, rejected, unevaluable) target ids.
+    
+    A row missing any filtered value cannot be judged, so it is set aside
+    instead of being counted as a failed condition.
+    """
+    conditions = normalize_filters(filters)
+    fields = {field for field, _, _ in conditions}
+    for field in sorted(fields):
+        if rows and not any(field in row for row in rows):
+            raise ValueError(f"field not available in data: {field}")
+    kept, rejected, unevaluable = [], [], []
+    for row in rows:
+        if any(row.get(field) is None for field in fields):
+            unevaluable.append(row["target_id"])
+            continue
+        try:
+            passed = all(
+                _holds(row[field], operator, expected)
+                for field, operator, expected in conditions
+            )
+        except TypeError as exc:
+            raise ValueError(f"cannot apply filter ot {row['target_id']: {exc}}") from None
+        (kept if passed else rejected).append(row["target_id"])
+    return kept, rejected, unevaluable

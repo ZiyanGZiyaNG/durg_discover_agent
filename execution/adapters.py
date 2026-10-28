@@ -11,7 +11,8 @@ from query_opentargets import (
     resolve_entity,
     resolve_mention,
 )
-from execution.analysis import RULE_NOTE, RULE_VERSION, rank_rows, stratify_targets
+from execution.analysis import RULE_NOTE, RULE_VERSION, filter_rows, rank_rows, stratify_targets
+
 
 
 class ResolveEntityAdapter:
@@ -436,6 +437,69 @@ class StratifyTargetEvidenceAdapter:
         )
 
 
+
+class FilterTargetsAdapter:
+    source = "local_analysis"
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        stratified = ctx.board.get("stratified_target_evidence")
+        base = stratified or ctx.board.get("target_candidates")
+        capability = "stratified_target_evidence" if stratified else "target_candidates"
+        problem = None
+        if not ctx.filters:
+            problem = "filter_targets needs filters"
+        elif not base:
+            problem = "filter_targets needs stratified_target_evidence or target_candidates"
+        rows: list[dict] = []
+        kept_rows: list[dict] = []
+        rejected: list[str] = []
+        unevaluable: list[str] = []
+
+        if problem is None:
+            rows = base.get("targets", [])
+            view = rows if stratified else [
+                {k: v for k, v in row.items() if k != "target_translation_layer"}
+                for row in stratify_targets(                    rows, 
+                    ctx.board.get("target_drug_evidence") or {},
+                    ctx.board.get("tractability_evidence") or {},
+                )
+            ]
+
+            try:
+                kept, rejected, unevaluable = filter_rows(view, ctx.filters)
+            except ValueError as exc:
+                problem = str(exc)
+            else:
+                kept_ids = set(kept)
+                kept_rows = [row for row in rows if row["target_id"] in kept_ids]
+        if problem is not None:
+            return StepResult(
+                step_id=ctx.step_id,
+                operation=ctx.operation,
+                status="error",
+                source=self.source,
+                error=problem,
+                elapsed_seconds=time.monotonic() - start,
+            )
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status="success" if kept_rows else "no_records",
+            source=self.source,
+            payload={
+                **base,
+                "targets": kept_rows,
+                "filter_spec": ctx.filters,
+                "excluded_target_ids": rejected,
+                "unevaluable_target_ids": unevaluable,
+            },
+            provides=[capability],
+            total_count=len(rows),
+            fetched_count=len(kept_rows),
+            elapsed_seconds=time.monotonic() - start,
+        )
+
 ADAPTERS: dict[str, Adapter] = {
     "resolve_disease": ResolveEntityAdapter("disease", "resolved_disease"),
     "resolve_diseases": ResolveEntityAdapter("disease", "resolved_disease"),
@@ -448,4 +512,5 @@ ADAPTERS: dict[str, Adapter] = {
     "rank_targets": RankTargetsAdapter(),
     "stratify_target_evidence_layers": StratifyTargetEvidenceAdapter(),
     "discover_targets_per_disease": DiscoverTargetsAdapter(),
+    "filter_targets": FilterTargetsAdapter(),
 }
