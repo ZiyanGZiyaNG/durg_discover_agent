@@ -925,6 +925,7 @@ OPERATION_GROUPS = {
                 "join_",
                 "normalize_",
                 "stratify_",
+                "check_",
             )
         )
     ],
