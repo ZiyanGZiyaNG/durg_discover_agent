@@ -97,6 +97,26 @@ query Tractability($ensemblId: String!) {
 }
 """
 
+
+DRUG_INDICATIONS_QUERY = """
+query DrugIndications($chemblId: String!) {
+  drug(chemblId: $chemblId) {
+    id
+    name
+    indications {
+      count
+      rows { maxClinicalStage disease { id name } }
+    }
+  }
+}
+"""
+
+DISEASE_ANCESTORS_QUERY = """
+query DiseaseAncestors($efoId: String!) {
+  disease(efoId: $efoId) { id name ancestors }
+}
+"""
+
 TYPE_INTROSPECTION_QUERY = """
 query TypeFields($typeName: String!) {
   __type(name: $typeName) {
@@ -684,4 +704,46 @@ def get_target_tractability_by_id(ensembl_id: str) -> dict[str, Any]:
             "Tractability is an in silico druggability assessment, "
             "not evidence of efficacy or of an existing drug."
         ]
+    }
+
+
+
+
+def get_drug_indications_by_id(chembl_id: str) -> dict[str, Any]:
+    data = _graphql(DRUG_INDICATIONS_QUERY, {"chemblId": chembl_id})
+    drug = data.get("drug")
+    if not drug:
+        raise OpenTargetsError(f"Drug record unavailable: {chembl_id}")
+    block = drug.get("indications") or {}
+    rows = block.get("rows") or []
+    return {
+        "drug_id": drug["id"],
+        "drug_name": drug.get("name") or "",
+        "total_indication_count": int(block.get("count") or len(rows)),
+        "fetched_indication_count": len(rows),
+        "indications": [
+            {
+                "disease_id": row["disease"]["id"],
+                "disease_name": row["disease"]["name"],
+                "max_clinical_stage": row.get("maxClinicalStage")
+            }
+            for row in rows
+            if row.get("disease")
+        ],
+        "limitations": [
+            "Stages are Open Targets database records, "
+            "not an official approval conclusion."
+        ],
+    }
+
+
+def get_disease_ancestors(efo_id: str) -> dict[str, Any]:
+    data = _graphql(DISEASE_ANCESTORS_QUERY, {"efoId": efo_id})
+    disease = data.get("disease")
+    if not disease:
+        raise OpenTargetsError(f"Disease record unavailable: {efo_id}")
+    return {
+        "disease_id": disease["id"],
+        "disease_name": disease.get("name") or "",
+        "ancestor_ids": list(disease.get("ancestors") or []),
     }

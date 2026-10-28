@@ -121,6 +121,48 @@ class FilteredTargets(_Record):
     unevaluable_target_ids: list[str]
 
 
+class IndicationRow(_Record):
+    disease_id: str
+    disease_name: str
+    max_clinical_stage: str | None = None
+
+
+class DrugIndications(_Record):
+    drug_id: str
+    drug_name: str
+    total_indication_count: int
+    fetched_indication_count: int
+    indications: list[IndicationRow]
+
+
+class ApprovedIndications(_Record):
+    by_drug: dict[str, DrugIndications]
+    failed_drugs: dict[str, str]
+
+
+class BroaderApproval(_Record):
+    disease_id: str
+    disease_name: str
+
+
+class IndicationCheckRow(_Record):
+    drug_id: str
+    drug_name: str
+    disease_id: str
+    disease_name: str
+    status: str
+    exact_stage: str | None = None
+    broader_approvals: list[BroaderApproval]
+    indications_truncated: bool
+
+
+class IndicationChecks(_Record):
+    disease_id: str
+    disease_name: str
+    checks: list[IndicationCheckRow]
+    unchecked_drugs: dict[str, str]
+
+
 # operation -> the model its payload must satisfy (same keys as ADAPTERS)
 OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "resolve_disease": ResolvedEntities,
@@ -135,4 +177,6 @@ OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "stratify_target_evidence_layers": StratifiedEvidence,
     "rank_targets": RankedTargets,
     "filter_targets": FilteredTargets,
+    "retrieve_approved_indications": ApprovedIndications,
+    "check_indication": IndicationChecks,
 }

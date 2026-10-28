@@ -5,13 +5,22 @@ from execution.contracts import Adapter, StepContext, StepResult
 from query_opentargets import (
     OpenTargetsError,
     discover_disease_targets,
+    get_disease_ancestors,
     get_disease_target_evidence_by_ids,
+    get_drug_indications_by_id,
     get_target_drug_evidence_by_ids,
     get_target_tractability_by_id,
     resolve_entity,
     resolve_mention,
 )
-from execution.analysis import RULE_NOTE, RULE_VERSION, filter_rows, rank_rows, stratify_targets
+from execution.analysis import (
+    RULE_NOTE,
+    RULE_VERSION,
+    classify_indication,
+    filter_rows,
+    rank_rows,
+    stratify_targets,
+)
 
 
 
@@ -500,6 +509,146 @@ class FilterTargetsAdapter:
             elapsed_seconds=time.monotonic() - start,
         )
 
+
+
+
+class RetrieveApprovedIndicationsAdapter:
+    source = "open_targets"
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        drugs = _resolved_for_step(ctx, "drug", "resolved_drug")
+        if not drugs:
+            return StepResult(
+                step_id=ctx.step_id,
+                operation=ctx.operation,
+                status="error",
+                source=self.source,
+                error="retrieve_approved_indications needs at least one resolved drug",
+                elapsed_seconds=time.monotonic() - start,
+            )
+        by_drug, failed_drugs = _collect_per_target(
+            drugs, lambda drug: get_drug_indications_by_id(drug["id"])
+        )
+        errors = "; ".join(f"{did}: {msg}" for did, msg in failed_drugs.items())
+        if not by_drug:
+            return StepResult(
+                step_id=ctx.step_id,
+                operation=ctx.operation,
+                status="error",
+                source=self.source,
+                error=errors,
+                elapsed_seconds=time.monotonic() - start,
+            )
+        total = sum(e["total_indication_count"] for e in by_drug.values())
+        fetched = sum(e["fetched_indication_count"] for e in by_drug.values())
+        truncated = fetched < total
+        if failed_drugs:
+            status = "partial_error"
+        elif total == 0:
+            status = "no_records"
+        elif truncated:
+            status = "partial_truncated"
+        else:
+            status = "success"
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status=status,
+            source=self.source,
+            payload={"by_drug": by_drug, "failed_drugs": failed_drugs},
+            provides=["approval_evidence"],
+            total_count=total,
+            fetched_count=fetched,
+            truncated=truncated,
+            error=errors or None,
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+
+def _disease_for_check(ctx: StepContext) -> dict | None:
+    resolved = _resolved_for_step(ctx, "disease", "resolved_disease")
+    if len(resolved) == 1:
+        return resolved[0]
+    named = [e for e in ctx.entities.values() if e.get("entity_type") == "disease"]
+    if resolved or len(named) != 1:
+        return None
+    entity = named[0]
+    return resolve_mention(
+        entity["mention"], "disease", entity.get("entity_id"), resolver=resolve_entity
+    )
+
+
+class CheckIndicationAdapter:
+    source = "open_targets"
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+
+        def fail(message: str) -> StepResult:
+            return StepResult(
+                step_id=ctx.step_id,
+                operation=ctx.operation,
+                status="error",
+                source=self.source,
+                error=message,
+                elapsed_seconds=time.monotonic() - start,
+            )
+
+        evidence = ctx.board.get("approval_evidence") or {}
+        by_drug = evidence.get("by_drug") or {}
+        if not by_drug:
+            return fail("check_indication needs approval_evidence for at least one drug")
+        try:
+            disease = _disease_for_check(ctx)
+            if disease is None:
+                return fail("check_indication needs exactly one disease")
+            ancestors = get_disease_ancestors(disease["id"])
+        except OpenTargetsError as exc:
+            return fail(str(exc))
+
+        checks = []
+        for drug_id, entry in by_drug.items():
+            verdict = classify_indication(
+                entry["indications"], disease["id"], ancestors["ancestor_ids"]
+            )
+            checks.append(
+                {
+                    "drug_id": drug_id,
+                    "drug_name": entry["drug_name"],
+                    "disease_id": disease["id"],
+                    "disease_name": disease.get("name", ""),
+                    **verdict,
+                    "indications_truncated": (
+                        entry["fetched_indication_count"]
+                        < entry["total_indication_count"]
+                    ),
+                }
+            )
+        unchecked = evidence.get("failed_drugs") or {}
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status="partial_error" if unchecked else "success",
+            source=self.source,
+            payload={
+                "disease_id": disease["id"],
+                "disease_name": disease.get("name", ""),
+                "checks": checks,
+                "unchecked_drugs": unchecked,
+                "limitations": [
+                    "Stages are Open Targets database records, not an official approval conclusion.",
+                    "approved_on_broader_term means approval is recorded on a broader disease term; it is not approval for the specific disease.",
+                    "not_found_in_source means unconfirmed in this source, not 'not approved'.",
+                ],
+            },
+            provides=["indication_check"],
+            total_count=len(by_drug) + len(unchecked),
+            fetched_count=len(checks),
+            error="; ".join(f"{d}: {m}" for d, m in unchecked.items()) or None,
+            elapsed_seconds=time.monotonic() - start,
+        )
+
 ADAPTERS: dict[str, Adapter] = {
     "resolve_disease": ResolveEntityAdapter("disease", "resolved_disease"),
     "resolve_diseases": ResolveEntityAdapter("disease", "resolved_disease"),
@@ -513,4 +662,6 @@ ADAPTERS: dict[str, Adapter] = {
     "stratify_target_evidence_layers": StratifyTargetEvidenceAdapter(),
     "discover_targets_per_disease": DiscoverTargetsAdapter(),
     "filter_targets": FilterTargetsAdapter(),
+    "retrieve_approved_indications": RetrieveApprovedIndicationsAdapter(),
+    "check_indication": CheckIndicationAdapter(),
 }
