@@ -3,6 +3,22 @@ from operator import itemgetter
 from typing import Any
 
 
+APPROVED_STAGE = "APPROVAL"
+
+
+def classify_indication(
+    indications: list[dict[str, Any]],
+    disease_id: str,
+    ancestor_ids: list[str],
+) -> dict[str, Any]:
+    """Compare one drug's indication rows with one disease.
+
+    Rows look like {"disease_id", "disease_name", "max_clinical_stage"}.
+    An approval recorded on a broader (ancestor) term is reported on its own:
+    it does not mean the specific disease is approved.
+    """
+
+
 def rank_rows(
     rows: list[dict[str, Any]],
     primary_metric: str,
@@ -119,7 +135,7 @@ def normalize_filters(filters: dict[str, Any]) -> list[tuple[str, str, Any]]:
         for operator, expected in condition.items():
             operator = _OPERATOR_ALIASES.get(operator, operator)
             if operator not in FILTER_OPERATORS:
-                raise ValueError(f"unlnown filter operator {operator!r} on {field!r}")
+                raise ValueError(f"unknown filter operator {operator!r} on {field!r}")
             if operator == "in" and not isinstance(expected, list):
                 raise ValueError(f"'in' on {field!r} needs a list")
             conditions.append((field, operator, expected))
@@ -168,6 +184,39 @@ def filter_rows(
                 for field, operator, expected in conditions
             )
         except TypeError as exc:
-            raise ValueError(f"cannot apply filter ot {row['target_id']: {exc}}") from None
+            raise ValueError(f"cannot apply filter to {row['target_id']}: {exc}") from None
         (kept if passed else rejected).append(row["target_id"])
     return kept, rejected, unevaluable
+
+def classify_indication(
+        indications: list[dict[str, Any]],
+        disease_id: str,
+        ancestor_ids: list[str],
+) -> dict[str, Any]:
+    """Compare one drug's indication rows with one disease.
+    Rows look like {"disease_id", "disease_name", "max_clinical_stage"}.
+    An approval recorded on a broader (ancestor) term is reported on its own:
+    it does not mean the specific disease is approved. Ancestors can be very
+    broad, so the matched terms are always listed for the reader to judge.
+    """
+    ancestors = set(ancestor_ids)
+    exact = next((row for row in indications if row["disease_id"] == disease_id), None)
+    broader = [
+        {"disease_id": row["disease_id"], "disease_name": row["disease_name"]}
+        for row in indications
+        if row["disease_id"] in ancestors and row["max_clinical_stage"] == APPROVED_STAGE
+    ]
+
+    if exact is not None and exact["max_clinical_stage"] == APPROVED_STAGE:
+        status = "approved_exact"
+    elif broader: 
+        status = "approved_on_broader_term"
+    elif exact is not None:
+        status = "studied_not_approved"
+    else:
+        status = "not_found_in_source"
+    return {
+        "status": status,
+        "exact_stage": exact["max_clinical_stage"] if exact is not None else None,
+        "broader_approvals": broader,
+    }
