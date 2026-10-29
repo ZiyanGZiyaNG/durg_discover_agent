@@ -897,8 +897,22 @@ that no earlier step provides. Three representative plans compile in tests
 A live run of `phase2_pdac_known_targets_batched_v4.json` completed all six
 steps in 19.2 seconds and produced a ten-target ranking.
 
-Coverage is partial: adapters exist for 16 of 64 operations, and 3 of 18
-acceptance cases are fully executable. The Planner does not yet emit `inputs`
-references. The full suite passes 217 tests; 3 earlier failures are unrelated
-(Ollama cleanup and target-discovery filenames). The target-translation layer
+Coverage is partial: adapters exist for 37 of 64 operations, and 9 of 18
+acceptance cases have every required operation implemented. Of the remaining 27
+operations, 16 need only Open Targets data (variant resolution, cross-indication
+drugs and cancers, datasource and evidence-type comparison, safety and
+normal-tissue expression, kinase classification and coverage rates). The other
+11 depend on trial or publication data (ClinicalTrials.gov, Europe PMC), which
+has no query module yet.
+Added since the last update: `retrieve_associated_diseases`, `rank_diseases`,
+`compare_disease_rank` (generic replacement for the PDAC-specific
+`compare_pdac_rank`), `retrieve_genetic_evidence`,
+`retrieve_genetic_and_somatic_evidence`, `filter_supported_without_clinical_drug`,
+`filter_first_in_class_candidates` and `rank_opportunities`. Genetic and somatic
+evidence use the Open Targets `genetic_association` and `somatic_mutation`
+datatype scores. "Strong" evidence has no project-wide threshold, so the filter
+requires one in the plan. "No drug" means no drug record in Open Targets known
+drugs on the evaluation date, and a failed drug lookup is reported as
+unevaluable, not as no drug. The Planner does not yet emit `inputs` references.
+The full suite passes N tests with no failures. The target-translation layer
 rule is still provisional and awaits research-team approval.
