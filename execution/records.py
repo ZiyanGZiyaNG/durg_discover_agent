@@ -163,6 +163,31 @@ class IndicationChecks(_Record):
     unchecked_drugs: dict[str, str]
 
 
+class DrugMechanism(_Record):
+    action_type: str
+    mechanism_of_action: str
+    target_ids: list[str]
+
+
+class DrugTarget(_Record):
+    target_id: str
+    target_symbol: str
+    target_name: str
+
+
+class DrugTargetRecord(_Record):
+    drug_id: str
+    drug_name: str
+    mechanism_count: int
+    mechanisms: list[DrugMechanism]
+    targets: list[DrugTarget]
+
+
+class DrugTargets(_Record):
+    by_drug: dict[str, DrugTargetRecord]
+    failed_drugs: dict[str, str]
+
+
 # operation -> the model its payload must satisfy (same keys as ADAPTERS)
 OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "resolve_disease": ResolvedEntities,
@@ -179,4 +204,6 @@ OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "filter_targets": FilteredTargets,
     "retrieve_approved_indications": ApprovedIndications,
     "check_indication": IndicationChecks,
+    "resolve_drug": ResolvedEntities,
+    "retrieve_drug_targets": DrugTargets,
 }

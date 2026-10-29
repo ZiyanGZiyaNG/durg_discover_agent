@@ -117,6 +117,28 @@ query DiseaseAncestors($efoId: String!) {
 }
 """
 
+DRUG_IDENTITY_QUERY = """
+query DrugIdentity($chemblId: String!) {
+  drug(chemblId: $chemblId) { id name }
+}
+"""
+
+DRUG_TARGETS_QUERY = """
+query DrugTargets($chemblId: String!) {
+  drug(chemblId: $chemblId) {
+    id
+    name
+    mechanismsOfAction {
+      rows {
+        actionType
+        mechanismOfAction
+        targets { id approvedSymbol approvedName }
+      }
+    }
+  }
+}
+"""
+
 TYPE_INTROSPECTION_QUERY = """
 query TypeFields($typeName: String!) {
   __type(name: $typeName) {
@@ -359,8 +381,8 @@ def _normalized_entity_name(value: str) -> str:
 
 
 def search_entity_candidates(name: str, entity: str, limit: int = 5) -> list[dict[str, str]]:
-    if entity not in {"disease", "target"}:
-        raise ValueError("entity must be 'disease' or 'target'")
+    if entity not in {"disease", "target", "drug"}:
+        raise ValueError("entity must be 'disease', 'target' or 'drug'")
     data = _graphql(SEARCH_QUERY, {"queryString": name, "entityNames": [entity]})
     hits = (data.get("search") or {}).get("hits") or []
     return [{"id": hit["id"], "name": hit["name"]} for hit in hits[:limit]]
@@ -370,14 +392,19 @@ def resolve_entity(
     name: str, entity: str, entity_id: str | None = None
 ) -> dict[str, str]:
     """Resolve a disease or target before any LLM planning occurs."""
-    if entity not in {"disease", "target"}:
-        raise ValueError("entity must be 'disease' or 'target'")
+    if entity not in {"disease", "target", "drug"}:
+        raise ValueError("entity must be 'disease', 'target' or 'drug'")
     if entity_id:
         if entity == "disease":
             record = (_graphql(DISEASE_IDENTITY_QUERY, {"efoId": entity_id}).get("disease"))
             if not record:
                 raise EntityNotFoundError(f"Disease ID not found: {entity_id}")
             return {"id": record["id"], "name": record["name"], "symbol": ""}
+        if entity == "drug":
+            record = _graphql(DRUG_IDENTITY_QUERY, {"chemblId": entity_id}).get("drug")
+            if not record:
+                raise EntityNotFoundError(f"Drug ID not found: {entity_id}")
+            return {"id": record["id"], "name": record.get("name") or "", "symbol": ""}
         record = (_graphql(TARGET_IDENTITY_QUERY, {"ensemblId": entity_id}).get("target"))
         if not record:
             raise EntityNotFoundError(f"Target ID not found: {entity_id}")
@@ -746,4 +773,40 @@ def get_disease_ancestors(efo_id: str) -> dict[str, Any]:
         "disease_id": disease["id"],
         "disease_name": disease.get("name") or "",
         "ancestor_ids": list(disease.get("ancestors") or []),
+    }
+
+
+def get_drug_targets_by_id(chembl_id: str) -> dict[str, Any]:
+    data = _graphql(DRUG_TARGETS_QUERY, {"chemblId": chembl_id})
+    drug = data.get("drug")
+    if not drug:
+        raise OpenTargetsError(f"Drug record unavailable: {chembl_id}")
+    rows = (drug.get("mechanismsOfAction") or {}).get("rows") or []
+    mechanisms = []
+    targets: dict[str, dict[str, str]] = {}
+    for row in rows:
+        row_targets = row.get("targets") or []
+        mechanisms.append(
+            {
+                "action_type": row.get("actionType") or "",
+                "mechanism_of_action": row.get("mechanismOfAction") or "",
+                "target_ids": [target["id"] for target in row_targets],
+            }
+        )
+        for target in row_targets:
+            targets[target["id"]] = {
+                "target_id": target["id"],
+                "target_symbol": target.get("approvedSymbol") or "",
+                "target_name": target.get("approvedName") or "",
+            }
+    return {
+        "drug_id": drug["id"],
+        "drug_name": drug.get("name") or "",
+        "mechanism_count": len(rows),
+        "mechanisms": mechanisms,
+        "targets": list(targets.values()),
+        "limitations": [
+            "Targets come from curated mechanism-of-action records; "
+            "no record does not mean the drug has no target."
+        ],
     }

@@ -8,6 +8,7 @@ from query_opentargets import (
     get_disease_ancestors,
     get_disease_target_evidence_by_ids,
     get_drug_indications_by_id,
+    get_drug_targets_by_id,
     get_target_drug_evidence_by_ids,
     get_target_tractability_by_id,
     resolve_entity,
@@ -649,6 +650,55 @@ class CheckIndicationAdapter:
             elapsed_seconds=time.monotonic() - start,
         )
 
+class RetrieveDrugTargetsAdapter:
+    source = "open_targets"
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        drugs = _resolved_for_step(ctx, "drug", "resolved_drug")
+        if not drugs:
+            return StepResult(
+                step_id=ctx.step_id,
+                operation=ctx.operation,
+                status="error",
+                source=self.source,
+                error="retrieve_drug_targets needs at least one resolved drug",
+                elapsed_seconds=time.monotonic() - start,
+            )
+        by_drug, failed_drugs = _collect_per_target(
+            drugs, lambda drug: get_drug_targets_by_id(drug["id"])
+        )
+        errors = "; ".join(f"{did}: {msg}" for did, msg in failed_drugs.items())
+        if not by_drug:
+            return StepResult(
+                step_id=ctx.step_id,
+                operation=ctx.operation,
+                status="error",
+                source=self.source,
+                error=errors,
+                elapsed_seconds=time.monotonic() - start,
+            )
+        total = sum(len(entry["targets"]) for entry in by_drug.values())
+        if failed_drugs:
+            status = "partial_error"
+        elif total == 0:
+            status = "no_records"
+        else:
+            status = "success"
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status=status,
+            source=self.source,
+            payload={"by_drug": by_drug, "failed_drugs": failed_drugs},
+            provides=["target_drug_evidence"],
+            total_count=total,
+            fetched_count=total,
+            error=errors or None,
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+
 ADAPTERS: dict[str, Adapter] = {
     "resolve_disease": ResolveEntityAdapter("disease", "resolved_disease"),
     "resolve_diseases": ResolveEntityAdapter("disease", "resolved_disease"),
@@ -664,4 +714,6 @@ ADAPTERS: dict[str, Adapter] = {
     "filter_targets": FilterTargetsAdapter(),
     "retrieve_approved_indications": RetrieveApprovedIndicationsAdapter(),
     "check_indication": CheckIndicationAdapter(),
+    "resolve_drug": ResolveEntityAdapter("drug", "resolved_drug"),
+    "retrieve_drug_targets": RetrieveDrugTargetsAdapter(),
 }
