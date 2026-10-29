@@ -365,6 +365,45 @@ class SupportedWithoutClinicalDrug(_Record):
     evaluated_on: str
     limitations: list[str]
 
+class GeneticSomaticEvidenceRow(_Record):
+    target_id: str
+    genetic_evidence_score: float | None
+    somatic_evidence_score: float | None
+
+
+class GeneticSomaticEvidence(_Record):
+    disease_id: str
+    datatype_ids: list[str]
+    targets: list[GeneticSomaticEvidenceRow]
+    limitations: list[str]
+
+
+class FirstInClassRow(_Record):
+    target_id: str
+    max_genetic_somatic_score: float
+    known_drug_count: int
+
+
+class FirstInClassCandidates(_Record):
+    targets: list[FirstInClassRow]
+    excluded_target_ids: list[str]
+    unevaluable_target_ids: list[str]
+    filter_spec: dict[str, Any]
+    evaluated_on: str
+    limitations: list[str]
+
+
+class RankedOpportunity(_Record):
+    target_id: str
+    ranked_position: int
+    warnings: list[str]
+
+
+class RankedOpportunities(_Record):
+    opportunities: list[RankedOpportunity]
+    ranking_spec: dict[str, Any]
+    limitations: list[str]
+
 # operation -> the model its payload must satisfy (same keys as ADAPTERS)
 OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "resolve_disease": ResolvedEntities,
@@ -400,5 +439,8 @@ OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "retrieve_associated_diseases": TargetAssociatedDiseases,
     "compare_disease_rank": DiseaseRankComparison,
     "retrieve_genetic_evidence": GeneticEvidence,
-    "filter_supported_without_clinical_drug": SupportedWithoutClinicalDrug,
+    "filter_supported_without_clinical_drug": SupportedWithoutClinicalDrug,    
+    "retrieve_genetic_and_somatic_evidence": GeneticSomaticEvidence,
+    "filter_first_in_class_candidates": FirstInClassCandidates,
+    "rank_opportunities": RankedOpportunities,
 }

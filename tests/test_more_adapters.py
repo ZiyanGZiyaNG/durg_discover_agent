@@ -1210,3 +1210,185 @@ def test_supported_without_drug_needs_both_inputs():
         _ctx("filter_supported_without_clinical_drug", board={})
     )
     assert result.status == "error" and "clinical_stage_evidence" in result.error
+
+
+# ---------- first-in-class opportunity ----------
+
+def test_genetic_and_somatic_evidence_stay_separate(monkeypatch):
+    _fake_datatype_scores(
+        monkeypatch,
+        {
+            "T1": {"datatype_scores": [
+                {"datatype_id": "genetic_association", "score": 0.7},
+                {"datatype_id": "somatic_mutation", "score": 0.9},
+            ]},
+            "T2": {"datatype_scores": [{"datatype_id": "somatic_mutation", "score": 0.4}]},
+        },
+    )
+    result = ADAPTERS["retrieve_genetic_and_somatic_evidence"].run(
+        _ctx("retrieve_genetic_and_somatic_evidence", board=_candidates_board())
+    )
+    rows = {
+        r["target_id"]: (r["genetic_evidence_score"], r["somatic_evidence_score"])
+        for r in result.payload["targets"]
+    }
+    assert rows == {"T1": (0.7, 0.9), "T2": (None, 0.4), "T3": (None, None)}
+    assert result.provides == ["genetic_somatic_evidence"]
+    OUTPUT_MODELS["retrieve_genetic_and_somatic_evidence"].model_validate(result.payload)
+
+
+def _first_in_class_board():
+    def drugs(count):
+        return {"total_drug_count": count, "fetched_drug_count": count, "drugs": []}
+
+    rows = [
+        ("T1", 0.9, None),
+        ("T2", 0.2, 0.3),
+        ("T3", None, None),
+        ("T4", None, 0.8),
+        ("T5", 0.7, 0.6),
+        ("T6", 0.95, 0.9),
+    ]
+    return {
+        "genetic_somatic_evidence": {
+            "disease_id": PDAC["id"],
+            "datatype_ids": ["genetic_association", "somatic_mutation"],
+            "targets": [
+                {
+                    "target_id": tid,
+                    "target_symbol": tid,
+                    "target_name": tid,
+                    "genetic_evidence_score": g,
+                    "somatic_evidence_score": s,
+                }
+                for tid, g, s in rows
+            ],
+            "limitations": [],
+        },
+        "target_drug_evidence": {
+            "by_target": {
+                "T1": drugs(0), "T2": drugs(0), "T3": drugs(0), "T5": drugs(3), "T6": drugs(0),
+            },
+            "failed_targets": {"T4": "timeout"},
+        },
+    }
+
+
+_STRONG = {"max_genetic_somatic_score": {"gte": 0.6}}
+
+
+def test_first_in_class_keeps_strong_evidence_with_no_drug_record():
+    result = ADAPTERS["filter_first_in_class_candidates"].run(
+        _ctx("filter_first_in_class_candidates", board=_first_in_class_board(), filters=_STRONG)
+    )
+    assert [t["target_id"] for t in result.payload["targets"]] == ["T1", "T6"]
+    assert sorted(result.payload["excluded_target_ids"]) == ["T2", "T3", "T5"]
+    assert result.payload["unevaluable_target_ids"] == ["T4"]
+    assert result.status == "partial_error"
+    OUTPUT_MODELS["filter_first_in_class_candidates"].model_validate(result.payload)
+
+
+def test_first_in_class_needs_an_explicit_strength_filter():
+    result = ADAPTERS["filter_first_in_class_candidates"].run(
+        _ctx("filter_first_in_class_candidates", board=_first_in_class_board())
+    )
+    assert result.status == "error" and "evidence-strength" in result.error
+
+
+def test_first_in_class_rejects_an_unknown_filter_field():
+    result = ADAPTERS["filter_first_in_class_candidates"].run(
+        _ctx(
+            "filter_first_in_class_candidates",
+            board=_first_in_class_board(),
+            filters={"not_a_field": {"gte": 1}},
+        )
+    )
+    assert result.status == "error" and "not_a_field" in result.error
+
+
+def test_first_in_class_needs_both_inputs():
+    result = ADAPTERS["filter_first_in_class_candidates"].run(
+        _ctx("filter_first_in_class_candidates", board={}, filters=_STRONG)
+    )
+    assert result.status == "error" and "target_drug_evidence" in result.error
+
+
+def _opportunity_board():
+    def candidate(tid, score):
+        return {
+            "target_id": tid,
+            "target_symbol": tid,
+            "max_genetic_somatic_score": score,
+            "known_drug_count": 0,
+        }
+
+    def assessed(*values):
+        return {
+            "assessment_count": len(values),
+            "assessments": [
+                {"modality": f"M{i}", "value": value, "label": ""}
+                for i, value in enumerate(values)
+            ],
+        }
+
+    return {
+        "first_in_class_candidates": {
+            "targets": [candidate("T1", 0.9), candidate("T6", 0.95), candidate("T7", 0.8)]
+        },
+        "tractability_evidence": {
+            "by_target": {"T1": assessed(True, False), "T6": assessed(False)},
+            "failed_targets": {},
+        },
+    }
+
+
+_OPPORTUNITY_RANKING = {
+    "primary_metric": "max_genetic_somatic_score",
+    "direction": "descending",
+    "secondary_metrics": [],
+}
+
+
+def test_opportunities_are_ranked_by_the_metric_and_warn_about_tractability():
+    result = ADAPTERS["rank_opportunities"].run(
+        _ctx("rank_opportunities", board=_opportunity_board(), ranking=_OPPORTUNITY_RANKING)
+    )
+    ranked = {o["target_id"]: o for o in result.payload["opportunities"]}
+    assert [o["target_id"] for o in result.payload["opportunities"]] == ["T6", "T1", "T7"]
+    assert ranked["T1"]["warnings"] == []
+    assert any("No tractability bucket" in w for w in ranked["T6"]["warnings"])
+    assert any("not assessed" in w for w in ranked["T7"]["warnings"])
+    OUTPUT_MODELS["rank_opportunities"].model_validate(result.payload)
+
+
+def test_opportunity_ranking_needs_a_spec_and_candidates():
+    no_spec = ADAPTERS["rank_opportunities"].run(
+        _ctx("rank_opportunities", board=_opportunity_board())
+    )
+    assert no_spec.status == "error" and "ranking" in no_spec.error
+    no_candidates = ADAPTERS["rank_opportunities"].run(
+        _ctx("rank_opportunities", board={}, ranking=_OPPORTUNITY_RANKING)
+    )
+    assert no_candidates.status == "error" and "first_in_class_candidates" in no_candidates.error
+
+
+def test_empty_candidate_list_gives_no_records():
+    result = ADAPTERS["rank_opportunities"].run(
+        _ctx(
+            "rank_opportunities",
+            board={"first_in_class_candidates": {"targets": []}},
+            ranking=_OPPORTUNITY_RANKING,
+        )
+    )
+    assert result.status == "no_records"
+
+
+def test_opportunity_ranking_refuses_a_text_metric():
+    result = ADAPTERS["rank_opportunities"].run(
+        _ctx(
+            "rank_opportunities",
+            board=_opportunity_board(),
+            ranking={"primary_metric": "target_symbol", "direction": "ascending", "secondary_metrics": []},
+        )
+    )
+    assert result.status == "error" and "not numeric" in result.error

@@ -825,12 +825,18 @@ class RankDiseasesAdapter:
 
 
 GENETIC_DATATYPE = "genetic_association"
+SOMATIC_DATATYPE = "somatic_mutation"
 
 
-class RetrieveGeneticEvidenceAdapter:
-    """Genetic-association score of each candidate target for one disease."""
+class _DatatypeEvidenceAdapter:
+    """Datatype-level association scores of each candidate target for one disease."""
 
     source = "open_targets"
+    capability = ""
+    fields: dict[str, str] = {}  # output field -> Open Targets datatype id
+
+    def extra_payload(self) -> dict[str, Any]:
+        return {}
 
     def run(self, ctx: StepContext) -> StepResult:
         start = time.monotonic()
@@ -841,7 +847,7 @@ class RetrieveGeneticEvidenceAdapter:
             disease_id = (ctx.board.get("disease_target_association") or {}).get("disease_id")
         if not disease_id:
             return error_result(
-                ctx, self.source, start, "retrieve_genetic_evidence needs one resolved disease"
+                ctx, self.source, start, f"{ctx.operation} needs one resolved disease"
             )
         targets = _targets_for_step(ctx)
         if not targets:
@@ -849,7 +855,7 @@ class RetrieveGeneticEvidenceAdapter:
                 ctx,
                 self.source,
                 start,
-                "retrieve_genetic_evidence needs target candidates or resolved targets",
+                f"{ctx.operation} needs target candidates or resolved targets",
             )
         try:
             found = get_disease_targets_datatype_scores(
@@ -859,26 +865,22 @@ class RetrieveGeneticEvidenceAdapter:
             return error_result(ctx, self.source, start, str(exc))
         rows = []
         for target in targets:
-            record = found["by_target"].get(target["id"])
-            score = None
-            if record:
-                score = next(
-                    (
-                        item["score"]
-                        for item in record["datatype_scores"]
-                        if item["datatype_id"] == GENETIC_DATATYPE
-                    ),
-                    None,
-                )
+            record = found["by_target"].get(target["id"]) or {}
+            scores = {
+                item["datatype_id"]: item["score"]
+                for item in record.get("datatype_scores") or []
+            }
             rows.append(
                 {
                     "target_id": target["id"],
                     "target_symbol": target.get("symbol", ""),
                     "target_name": target.get("name", ""),
-                    "genetic_evidence_score": score,
+                    **{field: scores.get(datatype) for field, datatype in self.fields.items()},
                 }
             )
-        with_score = sum(row["genetic_evidence_score"] is not None for row in rows)
+        with_score = sum(
+            any(row[field] is not None for field in self.fields) for row in rows
+        )
         return StepResult(
             step_id=ctx.step_id,
             operation=ctx.operation,
@@ -886,21 +888,41 @@ class RetrieveGeneticEvidenceAdapter:
             source=self.source,
             payload={
                 "disease_id": found["disease_id"],
-                "datatype_id": GENETIC_DATATYPE,
+                **self.extra_payload(),
                 "targets": rows,
                 "limitations": [
-                    "The score is the Open Targets genetic_association datatype score "
-                    "for this disease; it is not a probability or evidence of efficacy.",
-                    "A target with no score has no genetic_association evidence listed "
-                    "in this source; the score is missing, not zero.",
+                    "Scores are Open Targets datatype association scores for this "
+                    f"disease ({', '.join(self.fields.values())}); they are not "
+                    "probabilities or evidence of efficacy.",
+                    "A target with no score for a datatype has none listed in this "
+                    "source; the score is missing, not zero.",
                     "Only the candidate targets from earlier steps were queried.",
                 ],
             },
-            provides=["genetic_evidence"],
+            provides=[self.capability],
             total_count=len(rows),
             fetched_count=with_score,
             elapsed_seconds=time.monotonic() - start,
         )
+
+
+class RetrieveGeneticEvidenceAdapter(_DatatypeEvidenceAdapter):
+    capability = "genetic_evidence"
+    fields = {"genetic_evidence_score": GENETIC_DATATYPE}
+
+    def extra_payload(self) -> dict[str, Any]:
+        return {"datatype_id": GENETIC_DATATYPE}
+
+
+class RetrieveGeneticAndSomaticEvidenceAdapter(_DatatypeEvidenceAdapter):
+    capability = "genetic_somatic_evidence"
+    fields = {
+        "genetic_evidence_score": GENETIC_DATATYPE,
+        "somatic_evidence_score": SOMATIC_DATATYPE,
+    }
+
+    def extra_payload(self) -> dict[str, Any]:
+        return {"datatype_ids": [GENETIC_DATATYPE, SOMATIC_DATATYPE]}
 
 
 class FilterSupportedWithoutClinicalDrugAdapter:
@@ -982,5 +1004,181 @@ class FilterSupportedWithoutClinicalDrugAdapter:
             total_count=len(genetic["targets"]),
             fetched_count=len(kept_rows),
             error="; ".join(f"{tid}: {msg}" for tid, msg in failed.items()) or None,
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+
+class FilterFirstInClassCandidatesAdapter:
+    """Targets with strong genetic or somatic evidence and no drug record found."""
+
+    source = "local_analysis"
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        evidence = ctx.board.get("genetic_somatic_evidence") or {}
+        drugs = ctx.board.get("target_drug_evidence") or {}
+        if not evidence.get("targets") or drugs.get("by_target") is None:
+            return error_result(
+                ctx,
+                self.source,
+                start,
+                "filter_first_in_class_candidates needs genetic_somatic_evidence "
+                "and target_drug_evidence",
+            )
+        if not ctx.filters:
+            return error_result(
+                ctx,
+                self.source,
+                start,
+                "filter_first_in_class_candidates needs an explicit evidence-strength "
+                "filter (for example max_genetic_somatic_score); the project has not "
+                "defined 'strong'",
+            )
+        by_drug = drugs["by_target"]
+        failed = drugs.get("failed_targets") or {}
+        candidates: list[dict] = []
+        rejected: list[str] = []
+        unevaluable: list[str] = []
+        for row in evidence["targets"]:
+            scores = [
+                row[field]
+                for field in ("genetic_evidence_score", "somatic_evidence_score")
+                if row.get(field) is not None
+            ]
+            if not scores:
+                rejected.append(row["target_id"])
+                continue
+            record = by_drug.get(row["target_id"])
+            if record is None:
+                unevaluable.append(row["target_id"])
+                continue
+            if record["total_drug_count"] > 0:
+                rejected.append(row["target_id"])
+                continue
+            candidates.append(
+                {
+                    **row,
+                    "max_genetic_somatic_score": max(scores),
+                    "known_drug_count": record["total_drug_count"],
+                }
+            )
+        try:
+            kept_ids, extra_rejected, extra_unevaluable = filter_rows(
+                candidates, ctx.filters
+            )
+        except ValueError as exc:
+            return error_result(ctx, self.source, start, str(exc))
+        kept_set = set(kept_ids)
+        kept_rows = [row for row in candidates if row["target_id"] in kept_set]
+        rejected += extra_rejected
+        unevaluable += extra_unevaluable
+        if failed:
+            status = "partial_error"
+        else:
+            status = "success" if kept_rows else "no_records"
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status=status,
+            source=self.source,
+            payload={
+                "targets": kept_rows,
+                "excluded_target_ids": rejected,
+                "unevaluable_target_ids": unevaluable,
+                "filter_spec": ctx.filters,
+                "evaluated_on": datetime.now(timezone.utc).date().isoformat(),
+                "limitations": [
+                    "No known drug means no drug record was found for the target in "
+                    "the Open Targets known-drug data on the evaluated_on date; it "
+                    "does not prove that no drug exists.",
+                    "A target whose drug retrieval failed is unevaluable, not 'no drug'.",
+                    "Evidence scores are Open Targets association scores, not "
+                    "probabilities or evidence of efficacy.",
+                ],
+            },
+            provides=["first_in_class_candidates"],
+            total_count=len(evidence["targets"]),
+            fetched_count=len(kept_rows),
+            error="; ".join(f"{tid}: {msg}" for tid, msg in failed.items()) or None,
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+
+class RankOpportunitiesAdapter:
+    """Order candidates by an explicit metric; tractability only adds warnings."""
+
+    source = "local_analysis"
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        if ctx.ranking is None:
+            return error_result(
+                ctx, self.source, start, "rank_opportunities needs a ranking spec"
+            )
+        candidates = ctx.board.get("first_in_class_candidates")
+        if candidates is None or candidates.get("targets") is None:
+            return error_result(
+                ctx, self.source, start, "rank_opportunities needs first_in_class_candidates"
+            )
+        tractability = (ctx.board.get("tractability_evidence") or {}).get("by_target") or {}
+        rows = []
+        for row in candidates["targets"]:
+            record = tractability.get(row["target_id"])
+            warnings = []
+            if record is None:
+                bucket_count = modalities = None
+                warnings.append(
+                    "Tractability was not assessed for this target; missing is not "
+                    "'not tractable'."
+                )
+            else:
+                positives = [a for a in record["assessments"] if a["value"]]
+                bucket_count = len(positives)
+                modalities = sorted({a["modality"] for a in positives})
+                if not positives:
+                    warnings.append(
+                        "No tractability bucket is assessed as true for this target."
+                    )
+            rows.append(
+                {
+                    **row,
+                    "tractable_bucket_count": bucket_count,
+                    "tractable_modalities": modalities,
+                    "warnings": warnings,
+                }
+            )
+        metrics = [ctx.ranking["primary_metric"], *(ctx.ranking.get("secondary_metrics") or [])]
+        for metric in metrics:
+            values = [row[metric] for row in rows if row.get(metric) is not None]
+            if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in values):
+                return error_result(
+                    ctx, self.source, start, f"ranking metric {metric!r} is not numeric"
+                )
+        try:
+            ranked = rank_rows(
+                rows,
+                ctx.ranking["primary_metric"],
+                ctx.ranking["direction"],
+                ctx.ranking.get("secondary_metrics"),
+            )
+        except ValueError as exc:
+            return error_result(ctx, self.source, start, str(exc))
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status="success" if ranked else "no_records",
+            source=self.source,
+            payload={
+                "opportunities": ranked,
+                "ranking_spec": ctx.ranking,
+                "limitations": [
+                    "The order reflects the chosen metric only; it is not a probability "
+                    "of success.",
+                    "Tractability is shown as warnings and does not change the order.",
+                ],
+            },
+            provides=["opportunity_ranking"],
+            total_count=len(ranked),
+            fetched_count=len(ranked),
             elapsed_seconds=time.monotonic() - start,
         )
