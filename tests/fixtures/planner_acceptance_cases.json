@@ -20,13 +20,13 @@
     "question": "KRAS 與哪些疾病有關聯？證據強度如何？胰臟癌是不是關聯最強的？",
     "research_intent": "列出 KRAS 相關疾病、比較證據強度並確認 PDAC 的相對位置。",
     "required_entities": [{"entity_type": "target", "mention": "KRAS"}, {"entity_type": "disease", "mention": "胰臟癌"}],
-    "required_operations": ["resolve_target", "retrieve_associated_diseases", "rank_diseases", "compare_pdac_rank"],
-    "required_dependencies": [["resolve_target", "retrieve_associated_diseases"], ["retrieve_associated_diseases", "rank_diseases"], ["rank_diseases", "compare_pdac_rank"]],
+    "required_operations": ["resolve_target", "retrieve_associated_diseases", "rank_diseases", "compare_disease_rank"],
+    "required_dependencies": [["resolve_target", "retrieve_associated_diseases"], ["retrieve_associated_diseases", "rank_diseases"], ["rank_diseases", "compare_disease_rank"]],
     "required_sources": ["open_targets"],
     "required_safeguards": ["association_score_not_probability", "provenance_pagination_truncation"],
     "required_filters": [],
     "required_ranking": ["overall_association_score"],
-    "required_aggregation": ["pdac_relative_rank"],
+    "required_aggregation": ["disease_relative_rank"],
     "allowed_characteristics": ["single_hop", "comparison_and_aggregation"]
   },
   {

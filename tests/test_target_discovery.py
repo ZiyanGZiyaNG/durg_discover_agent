@@ -98,3 +98,14 @@ def test_discovery_existing_output_directory_is_not_replaced_by_parent():
     assert result == (
         r"D:\NCKU_Drug_Discovery\outputs\pancreatic_cancer_top10_targets.json"
     )
+
+
+def test_discovery_filename_uses_disease_even_with_old_filename(tmp_path):
+    old_output = tmp_path / "Alzheimer_top10_targets.json"
+    result = discovery_output_path("pancreatic cancer", 10, str(old_output))
+    assert result == str(tmp_path / "pancreatic_cancer_top10_targets.json")
+
+
+def test_discovery_existing_output_directory_is_not_replaced_by_parent(tmp_path):
+    result = discovery_output_path("pancreatic cancer", 10, str(tmp_path))
+    assert result == str(tmp_path / "pancreatic_cancer_top10_targets.json")

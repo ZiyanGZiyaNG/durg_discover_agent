@@ -39,7 +39,12 @@ from execution.analysis import (
 )
 
 from execution.more_adapters import RankDiseasesAdapter
-
+from execution.common import (
+    _collect_per_target,
+    _resolved_for_step,
+    _targets_for_step,
+    error_result,
+)
 
 class ResolveEntityAdapter:
     source = "open_targets"
@@ -624,6 +629,71 @@ class CheckIndicationAdapter:
             elapsed_seconds=time.monotonic() - start,
         )
 
+
+class CompareDiseaseRankAdapter:
+    """Where the named disease sits in the ranking an earlier step produced."""
+
+    source = "open_targets"
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        ranked = (ctx.board.get("disease_ranking") or {}).get("diseases") or []
+        if not ranked:
+            return error_result(
+                ctx,
+                self.source,
+                start,
+                "compare_disease_rank needs disease_ranking from rank_diseases",
+            )
+        try:
+            disease = _disease_for_check(ctx)
+        except OpenTargetsError as exc:
+            return error_result(ctx, self.source, start, str(exc))
+        if disease is None:
+            return error_result(
+                ctx,
+                self.source,
+                start,
+                "compare_disease_rank needs exactly one disease in entity_refs",
+            )
+        match = next(
+            (row for row in ranked if row.get("disease_id") == disease["id"]), None
+        )
+        top = ranked[0]
+        limitations = [
+            f"The position is within the {len(ranked)} diseases fetched, "
+            "not among all associated diseases.",
+            "Only an exact disease ID match counts; related or broader disease "
+            "terms are not merged.",
+        ]
+        if match is None:
+            limitations.append(
+                "The disease is not in the fetched ranking; this is not evidence "
+                "of no association."
+            )
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status="success",
+            source=self.source,
+            payload={
+                "disease_id": disease["id"],
+                "disease_name": disease.get("name", ""),
+                "found_in_ranking": match is not None,
+                "ranked_position": match["ranked_position"] if match else None,
+                "overall_association_score": (
+                    match.get("overall_association_score") if match else None
+                ),
+                "ranked_disease_count": len(ranked),
+                "top_disease_id": top.get("disease_id"),
+                "top_disease_name": top.get("disease_name"),
+                "is_top": match is not None and match["ranked_position"] == 1,
+                "limitations": limitations,
+            },
+            provides=["disease_rank_comparison"],
+            elapsed_seconds=time.monotonic() - start,
+        )
+
 class RetrieveDrugTargetsAdapter:
     source = "open_targets"
 
@@ -711,4 +781,5 @@ ADAPTERS: dict[str, Adapter] = {
     "retrieve_clinical_stage": RetrieveClinicalStageAdapter(),
     "rank_diseases": RankDiseasesAdapter(),
     "retrieve_associated_diseases": RetrieveAssociatedDiseasesAdapter(),
+    "compare_disease_rank": CompareDiseaseRankAdapter(),
 }

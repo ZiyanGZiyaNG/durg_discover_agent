@@ -1016,3 +1016,56 @@ def test_associated_diseases_feed_rank_diseases(monkeypatch):
     )
     assert ranked.status == "success"
     assert [d["disease_id"] for d in ranked.payload["diseases"]] == [PDAC["id"], CRC["id"]]
+
+
+
+# ---------- compare_disease_rank ----------
+
+def _ranked_diseases_board():
+    got = ADAPTERS["rank_diseases"].run(
+        _ctx("rank_diseases", board=_pairs_board(), ranking=_DISEASE_RANKING)
+    )
+    return {"disease_ranking": got.payload}
+
+
+def _compare(board, **extra):
+    return ADAPTERS["compare_disease_rank"].run(
+        _ctx("compare_disease_rank", board=board, **extra)
+    )
+
+
+def test_disease_rank_is_found_and_marked_top():
+    result = _compare({**_ranked_diseases_board(), "resolved_disease": {"e1": PDAC}})
+    assert result.status == "success"
+    assert result.provides == ["disease_rank_comparison"]
+    assert result.payload["found_in_ranking"] is True
+    assert result.payload["ranked_position"] == 1 and result.payload["is_top"] is True
+    OUTPUT_MODELS["compare_disease_rank"].model_validate(result.payload)
+
+
+def test_disease_rank_reports_a_lower_position():
+    result = _compare({**_ranked_diseases_board(), "resolved_disease": {"e1": CRC}})
+    assert result.payload["ranked_position"] == 2
+    assert result.payload["is_top"] is False
+    assert result.payload["top_disease_id"] == PDAC["id"]
+
+
+def test_disease_missing_from_the_ranking_is_not_called_unassociated():
+    other = {"id": "EFO_9999999", "name": "other", "symbol": "", "entity_type": "disease"}
+    result = _compare({**_ranked_diseases_board(), "resolved_disease": {"e1": other}})
+    assert result.status == "success"
+    assert result.payload["found_in_ranking"] is False
+    assert result.payload["ranked_position"] is None
+    assert any("not evidence of no association" in t for t in result.payload["limitations"])
+
+
+def test_disease_rank_needs_a_ranking():
+    result = _compare({"resolved_disease": {"e1": PDAC}})
+    assert result.status == "error" and "disease_ranking" in result.error
+
+
+def test_disease_rank_needs_exactly_one_disease():
+    result = _compare(
+        {**_ranked_diseases_board(), "resolved_disease": {"e1": PDAC, "e2": CRC}}
+    )
+    assert result.status == "error" and "one disease" in result.error

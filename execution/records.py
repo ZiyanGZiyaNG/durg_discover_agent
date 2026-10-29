@@ -327,6 +327,16 @@ class TargetAssociatedDiseases(_Record):
     failed_targets: dict[str, str]
     limitations: list[str] = []
 
+
+
+class DiseaseRankComparison(_Record):
+    disease_id: str
+    found_in_ranking: bool
+    ranked_position: int | None
+    ranked_disease_count: int
+    is_top: bool
+    limitations: list[str]
+
 # operation -> the model its payload must satisfy (same keys as ADAPTERS)
 OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "resolve_disease": ResolvedEntities,
@@ -360,4 +370,5 @@ OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "retrieve_clinical_stage": ClinicalStageEvidence,
     "rank_diseases": RankedDiseases,
     "retrieve_associated_diseases": TargetAssociatedDiseases,
+    "compare_disease_rank": DiseaseRankComparison,
 }

@@ -89,6 +89,8 @@ _REVIEWED_OPERATION_ALIASES: dict[str, list[str]] = {
     "resolve_disease": ["entity_resolution", "normalize_disease"],
     "resolve_target": ["normalize_target"],
     "resolve_drug": ["normalize_drug"],
+    "resolve_drug": ["normalize_drug"],
+    "compare_disease_rank": ["compare_pdac_rank"],
     "discover_targets": [
         "discover_targets_per_disease",
         "retrieve_disease_targets",
@@ -163,7 +165,7 @@ _CANONICAL_OPERATION_IDS = sorted(
         "compare_targets",
         "compare_association_evidence",
         "compare_evidence_types",
-        "compare_pdac_rank",
+        "compare_disease_rank",
         "compare_disease_rates",
         "normalize_comparison_dimensions",
         "intersect_targets",
@@ -178,6 +180,7 @@ _CANONICAL_OPERATION_IDS = sorted(
         "stratify_target_evidence_layers",
         "define_coverage_denominators",
         "calculate_coverage_rates",
+        "compare_disease_rank",
     }
 )
 
@@ -194,7 +197,7 @@ OPERATION_SEMANTICS: dict[str, str] = {
     "compare_association_evidence": "以相同維度並列比較多個 disease-target 關聯證據，不建立未定義的綜合分數。",
     "compare_disease_rates": "比較各疾病已計算的比率，必須使用一致分母定義。",
     "compare_evidence_types": "比較不同證據類型的分布或貢獻，不把紀錄數直接當 datasource score。",
-    "compare_pdac_rank": "檢查 PDAC 在已排序疾病中的相對位置，不重新查詢疾病清單。",
+    "compare_disease_rank": "檢查 entity_refs 指定的疾病在已排序疾病中的相對位置，不重新查詢疾病清單；不在已取得範圍只能標為『未在已取得清單』，不得視為無關聯。",
     "compare_targets": "依一致比較維度並列多個標的的證據，不把缺失值視為零。",
     "define_coverage_denominators": "在計算覆蓋率前明確定義符合資格的總體、分子與分母。",
     "discover_targets": "輸入已解析疾病，取得 disease-associated targets；僅表示疾病關聯，不等同治療有效或可成藥。",
@@ -299,6 +302,7 @@ _OPERATION_CONTRACTS: dict[str, dict] = {
     "rank_targets": {"requires_any": ["target_candidates", "stratified_target_evidence"]},
     "retrieve_associated_diseases": {"requires_all": ["resolved_target"], "provides": ["disease_target_association"]},
     "rank_diseases": {"requires_all": ["disease_target_association"], "provides": ["disease_ranking"]},
+    "compare_disease_rank": {"requires_all": ["disease_ranking"], "provides": ["disease_rank_comparison"]},
 }
 
 

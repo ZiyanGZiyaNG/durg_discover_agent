@@ -1196,6 +1196,7 @@ def test_ollama_cleanup_detects_stopping_then_confirms_model_removed(monkeypatch
     )
     monkeypatch.setenv("PLANNER_OLLAMA_STOP_GRACE_SECONDS", "1")
     monkeypatch.setenv("PLANNER_OLLAMA_STOP_POLL_SECONDS", "0.001")
+    monkeypatch.setenv("OLLAMA_MODEL", "qwen3:14b")
 
     result = _cleanup_ollama_after_timeout()
 
