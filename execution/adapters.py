@@ -26,6 +26,9 @@ from execution.more_adapters import (
     CompareEvidenceTypesAdapter,
     NormalizeComparisonDimensionsAdapter,
     CompareTargetsAdapter,
+    RetrieveDiseaseDrugsAdapter,
+    RetrieveTargetCancersAdapter,
+    JoinCrossIndicationPathsAdapter,
 )
 from query_opentargets import (
     OpenTargetsError,
@@ -802,4 +805,7 @@ ADAPTERS: dict[str, Adapter] = {
     "compare_evidence_types": CompareEvidenceTypesAdapter(),
     "normalize_comparison_dimensions": NormalizeComparisonDimensionsAdapter(),
     "compare_targets": CompareTargetsAdapter(),
+    "retrieve_disease_drugs": RetrieveDiseaseDrugsAdapter(),
+    "retrieve_target_cancers": RetrieveTargetCancersAdapter(),
+    "join_cross_indication_paths": JoinCrossIndicationPathsAdapter(),
 }

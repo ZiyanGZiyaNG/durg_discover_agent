@@ -30,6 +30,8 @@ from query_opentargets import (
     get_target_associated_diseases,
     get_disease_targets_datatype_scores,
     get_association_datasource_types,
+    get_disease_drug_records,
+    get_disease_lineage,
 )
 from datetime import datetime, timezone
 
@@ -1526,5 +1528,413 @@ class CompareTargetsAdapter:
             provides=["target_comparison"],
             total_count=len(comparisons),
             fetched_count=len(comparisons),
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+
+CANCER_AREA_IDS = {"MONDO_0045024", "EFO_0000616"}
+CANCER_AREA_NAMES = {"cancer or benign tumor", "neoplasm"}
+
+
+def _is_cancer(areas: list[dict[str, Any]]) -> bool | None:
+    """True/False from Open Targets therapeutic areas; None when none are listed."""
+    if not areas:
+        return None
+    return any(
+        area.get("id") in CANCER_AREA_IDS
+        or str(area.get("name") or "").strip().lower() in CANCER_AREA_NAMES
+        for area in areas
+    )
+
+
+def _flag(filters: dict[str, Any], name: str, default: bool) -> bool:
+    if name not in filters:
+        return default
+    value = filters[name]
+    if isinstance(value, dict):
+        if set(value) - {"eq"}:
+            raise ValueError(f"{name} filter supports only 'eq'")
+        value = value.get("eq")
+    if not isinstance(value, bool):
+        raise ValueError(f"{name} filter must be true or false")
+    return value
+
+
+class RetrieveDiseaseDrugsAdapter:
+    """Drug records Open Targets holds for the resolved disease(s)."""
+
+    source = "open_targets"
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        if ctx.filters:
+            return error_result(
+                ctx, self.source, start, f"unsupported filter(s): {sorted(ctx.filters)}"
+            )
+        diseases = _resolved_for_step(ctx, "disease", "resolved_disease")
+        if not diseases:
+            return error_result(
+                ctx,
+                self.source,
+                start,
+                "retrieve_disease_drugs needs at least one resolved disease",
+            )
+        named = _resolved_for_step(ctx, "drug", "resolved_drug")
+        by_disease, failed = _collect_per_target(
+            diseases, lambda disease: get_disease_drug_records(disease["id"])
+        )
+        errors = "; ".join(f"{did}: {msg}" for did, msg in failed.items())
+        if not by_disease:
+            return error_result(ctx, self.source, start, errors)
+        total = sum(found["total_drug_count"] for found in by_disease.values())
+        fetched = sum(found["fetched_drug_count"] for found in by_disease.values())
+        named_ids = {drug["id"] for drug in named}
+        for found in by_disease.values():
+            if named:
+                kept = [d for d in found["drugs"] if d["drug_id"] in named_ids]
+                present = {d["drug_id"] for d in kept}
+                found["drugs"] = kept
+                found["named_drugs_not_found"] = [
+                    {"drug_id": d["id"], "drug_name": d.get("name") or ""}
+                    for d in named
+                    if d["id"] not in present
+                ]
+            else:
+                found["named_drugs_not_found"] = []
+        kept_count = sum(len(found["drugs"]) for found in by_disease.values())
+        truncated = fetched < total
+        if failed:
+            status = "partial_error"
+        elif kept_count == 0:
+            status = "no_records"
+        elif truncated:
+            status = "partial_truncated"
+        else:
+            status = "success"
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status=status,
+            source=self.source,
+            payload={
+                "by_disease": by_disease,
+                "failed_diseases": failed,
+                "limitations": [
+                    "Only records filed under the exact disease id are listed; a drug "
+                    "recorded under a broader or narrower disease term does not appear.",
+                    "A named drug with no record here is not found in this source; that "
+                    "is not evidence that it is unused or unapproved.",
+                    "A stage is the Open Targets record for this drug and disease, not an "
+                    "approval conclusion; approval needs an explicit source.",
+                ],
+            },
+            provides=["disease_drug_evidence"],
+            total_count=total,
+            fetched_count=fetched,
+            truncated=truncated,
+            error=errors or None,
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+
+def _targets_from_drugs(board: dict[str, Any]) -> list[dict[str, str]]:
+    evidence = board.get("target_drug_evidence") or {}
+    found: dict[str, dict[str, str]] = {}
+    for record in (evidence.get("by_drug") or {}).values():
+        for target in record.get("targets") or []:
+            found.setdefault(
+                target["target_id"],
+                {
+                    "id": target["target_id"],
+                    "symbol": target.get("target_symbol") or "",
+                    "name": target.get("target_name") or "",
+                },
+            )
+    return list(found.values())
+
+
+class RetrieveTargetCancersAdapter:
+    """Cancers associated with each target; an association is not an indication."""
+
+    source = "open_targets"
+    default_top_n = 100
+    _FILTERS = {"cancer_only", "exclude_index_disease", "top_n"}
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        unsupported = sorted(set(ctx.filters) - self._FILTERS)
+        if unsupported:
+            return error_result(
+                ctx, self.source, start, f"unsupported filter(s): {unsupported}"
+            )
+        try:
+            cancer_only = _flag(ctx.filters, "cancer_only", True)
+            exclude_index = _flag(ctx.filters, "exclude_index_disease", False)
+        except ValueError as exc:
+            return error_result(ctx, self.source, start, str(exc))
+        top_n = ctx.filters.get("top_n", self.default_top_n)
+        if isinstance(top_n, bool) or not isinstance(top_n, int) or not 1 <= top_n <= 100:
+            return error_result(
+                ctx, self.source, start, "top_n must be an integer between 1 and 100"
+            )
+        targets = (
+            _resolved_for_step(ctx, "target", "resolved_target")
+            or _targets_from_drugs(ctx.board)
+            or _targets_for_step(ctx)
+        )
+        if not targets:
+            return error_result(
+                ctx,
+                self.source,
+                start,
+                "retrieve_target_cancers needs resolved targets or drug targets",
+            )
+        index_ids: set[str] = set()
+        index_disease_ids: list[str] = []
+        if exclude_index:
+            indexes = _resolved_for_step(ctx, "disease", "resolved_disease")
+            if not indexes:
+                return error_result(
+                    ctx,
+                    self.source,
+                    start,
+                    "exclude_index_disease needs a resolved disease",
+                )
+            try:
+                for disease in indexes:
+                    lineage = get_disease_lineage(disease["id"])
+                    index_disease_ids.append(lineage["disease_id"])
+                    index_ids |= {
+                        lineage["disease_id"],
+                        *lineage["ancestor_ids"],
+                        *lineage["descendant_ids"],
+                    }
+            except OpenTargetsError as exc:
+                return error_result(ctx, self.source, start, str(exc))
+        fetched_by_target, failed = _collect_per_target(
+            targets,
+            lambda target: get_target_associated_diseases(target["id"], top_n=top_n),
+        )
+        errors = "; ".join(f"{tid}: {msg}" for tid, msg in failed.items())
+        if not fetched_by_target:
+            return error_result(ctx, self.source, start, errors)
+
+        by_target = {}
+        for target_id, found in fetched_by_target.items():
+            kept, excluded, non_cancer, unclassified = [], 0, 0, 0
+            for row in found["diseases"]:
+                if row["disease_id"] in index_ids:
+                    excluded += 1
+                    continue
+                flag = _is_cancer(row.get("therapeutic_areas") or [])
+                if cancer_only:
+                    if flag is None:
+                        unclassified += 1
+                        continue
+                    if not flag:
+                        non_cancer += 1
+                        continue
+                kept.append(
+                    {
+                        "disease_id": row["disease_id"],
+                        "disease_name": row["disease_name"],
+                        "overall_association_score": row["overall_association_score"],
+                        "is_cancer": flag,
+                    }
+                )
+            by_target[target_id] = {
+                "target_id": target_id,
+                "target_symbol": found["target_symbol"],
+                "total_associated_disease_count": found["total_associated_disease_count"],
+                "fetched_disease_count": found["returned_disease_count"],
+                "diseases": kept,
+                "non_cancer_count": non_cancer,
+                "unclassified_count": unclassified,
+                "excluded_index_count": excluded,
+            }
+        total = sum(e["total_associated_disease_count"] for e in by_target.values())
+        fetched = sum(e["fetched_disease_count"] for e in by_target.values())
+        kept_count = sum(len(e["diseases"]) for e in by_target.values())
+        truncated = fetched < total
+        limitations = [
+            f"Only the top {top_n} associated diseases of each target were fetched, "
+            "so lower-ranked diseases are not listed.",
+            "An association is not a treatment indication; it does not show that a drug "
+            "works or is approved in that disease.",
+        ]
+        if cancer_only:
+            limitations.append(
+                "Cancer follows the Open Targets therapeutic areas 'cancer or benign "
+                "tumor' / 'neoplasm' (benign tumours included). Diseases with no "
+                "therapeutic area are counted as unclassified and left out, not treated "
+                "as non-cancer."
+            )
+        if exclude_index:
+            limitations.append(
+                "Index disease exclusion removes the disease together with its ancestors "
+                "and descendants in the ontology."
+            )
+        if failed:
+            status = "partial_error"
+        elif kept_count == 0:
+            status = "no_records"
+        elif truncated:
+            status = "partial_truncated"
+        else:
+            status = "success"
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status=status,
+            source=self.source,
+            payload={
+                "by_target": by_target,
+                "failed_targets": failed,
+                "cancer_only": cancer_only,
+                "index_disease_ids": index_disease_ids,
+                "index_exclusion_term_count": len(index_ids),
+                "truncated": truncated,
+                "limitations": limitations,
+            },
+            provides=["target_cancer_evidence"],
+            total_count=total,
+            fetched_count=fetched,
+            truncated=truncated,
+            error=errors or None,
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+
+class JoinCrossIndicationPathsAdapter:
+    """Chain index-disease drug -> target -> other disease. Paths are associations."""
+
+    source = "local_analysis"
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        disease_drugs = ctx.board.get("disease_drug_evidence")
+        drug_targets = ctx.board.get("target_drug_evidence")
+        target_cancers = ctx.board.get("target_cancer_evidence")
+        missing = [
+            name
+            for name, data in (
+                ("disease_drug_evidence", disease_drugs),
+                ("target_drug_evidence", drug_targets),
+                ("target_cancer_evidence", target_cancers),
+            )
+            if not data
+        ]
+        if missing:
+            return error_result(
+                ctx,
+                self.source,
+                start,
+                f"join_cross_indication_paths needs {', '.join(missing)}",
+            )
+        by_drug = drug_targets.get("by_drug")
+        if by_drug is None:
+            return error_result(
+                ctx,
+                self.source,
+                start,
+                "join_cross_indication_paths needs drug-to-target data from retrieve_drug_targets",
+            )
+        cancers = target_cancers.get("by_target") or {}
+        failed_targets = target_cancers.get("failed_targets") or {}
+        incomplete = {
+            f"drug:{drug_id}": message
+            for drug_id, message in (drug_targets.get("failed_drugs") or {}).items()
+        }
+        records: dict[str, list[dict[str, Any]]] = {drug_id: [] for drug_id in by_drug}
+        for disease_id, found in (disease_drugs.get("by_disease") or {}).items():
+            listed = {d["drug_id"]: d for d in found.get("drugs") or []}
+            for drug_id in by_drug:
+                record = listed.get(drug_id)
+                records[drug_id].append(
+                    {
+                        "disease_id": disease_id,
+                        "disease_name": found.get("disease_name"),
+                        "found_in_source": record is not None,
+                        "max_clinical_stage": record["max_clinical_stage"] if record else None,
+                    }
+                )
+        drugs, paths, groups = [], [], []
+        for drug_id, drug in by_drug.items():
+            drugs.append(
+                {
+                    "drug_id": drug_id,
+                    "drug_name": drug.get("drug_name"),
+                    "index_disease_records": records[drug_id],
+                }
+            )
+            for target in drug.get("targets") or []:
+                target_id = target["target_id"]
+                found = cancers.get(target_id)
+                if found is None:
+                    incomplete.setdefault(
+                        f"target:{target_id}",
+                        failed_targets.get(target_id, "no disease data for this target"),
+                    )
+                    continue
+                for disease in found["diseases"]:
+                    paths.append(
+                        {
+                            "drug_id": drug_id,
+                            "drug_name": drug.get("drug_name"),
+                            "target_id": target_id,
+                            "target_symbol": target.get("target_symbol"),
+                            "disease_id": disease["disease_id"],
+                            "disease_name": disease["disease_name"],
+                            "overall_association_score": disease["overall_association_score"],
+                        }
+                    )
+                groups.append(
+                    {
+                        "drug_id": drug_id,
+                        "drug_name": drug.get("drug_name"),
+                        "target_id": target_id,
+                        "target_symbol": target.get("target_symbol"),
+                        "other_disease_count": len(found["diseases"]),
+                    }
+                )
+        truncated = bool(target_cancers.get("truncated"))
+        if incomplete:
+            status = "partial_error"
+        elif not paths:
+            status = "no_records"
+        elif truncated:
+            status = "partial_truncated"
+        else:
+            status = "success"
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status=status,
+            source=self.source,
+            payload={
+                "drugs": drugs,
+                "paths": paths,
+                "groups": groups,
+                "incomplete": incomplete,
+                "limitations": [
+                    "A path shows that a drug's target is associated with another "
+                    "disease; it is not a treatment indication and not evidence that "
+                    "the drug works or is approved there.",
+                    "Paths are grouped by drug and target; the same disease reached "
+                    "through different targets or drugs appears once per path.",
+                    "Stages in index_disease_records are Open Targets records, not "
+                    "approval conclusions; approval needs an explicit source.",
+                ]
+                + (
+                    ["Each target's disease list is truncated to its top associations."]
+                    if truncated
+                    else []
+                ),
+            },
+            provides=["cross_indication_paths"],
+            total_count=len(paths),
+            fetched_count=len(paths),
+            truncated=truncated,
+            error="; ".join(f"{k}: {v}" for k, v in incomplete.items()) or None,
             elapsed_seconds=time.monotonic() - start,
         )

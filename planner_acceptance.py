@@ -313,6 +313,9 @@ _OPERATION_CONTRACTS: dict[str, dict] = {
     "compare_evidence_types": {"requires_any": ["datasource_evidence", "evidence_by_type"], "provides": ["evidence_type_comparison"]},
     "normalize_comparison_dimensions": {"requires_any": ["evidence_by_type", "datasource_evidence"], "provides": ["normalized_comparison"]},
     "compare_targets": {"requires_all": ["normalized_comparison"], "provides": ["target_comparison"]},
+    "retrieve_disease_drugs": {"requires_all": ["resolved_disease"], "provides": ["disease_drug_evidence"]},
+    "retrieve_target_cancers": {"requires_any": ["target_drug_evidence", "resolved_target", "target_candidates"], "provides": ["target_cancer_evidence"]},
+    "join_cross_indication_paths": {"requires_all": ["disease_drug_evidence", "target_drug_evidence", "target_cancer_evidence"], "provides": ["cross_indication_paths"]},
 }
 
 

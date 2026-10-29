@@ -468,6 +468,77 @@ class TargetComparison(_Record):
     comparisons: list[DatatypeComparison]
     limitations: list[str]
 
+
+class DiseaseDrug(_Record):
+    drug_id: str
+    drug_name: str = ""
+    max_clinical_stage: str | None = None
+
+
+class DiseaseDrugs(_Record):
+    disease_id: str
+    disease_name: str = ""
+    total_drug_count: int
+    fetched_drug_count: int
+    drugs: list[DiseaseDrug]
+    named_drugs_not_found: list[dict[str, Any]]
+
+
+class DiseaseDrugEvidence(_Record):
+    by_disease: dict[str, DiseaseDrugs]
+    failed_diseases: dict[str, str]
+    limitations: list[str]
+
+
+class TargetCancerRow(_Record):
+    disease_id: str
+    disease_name: str = ""
+    overall_association_score: float | None = None
+    is_cancer: bool | None = None
+
+
+class TargetCancers(_Record):
+    target_id: str
+    target_symbol: str = ""
+    total_associated_disease_count: int
+    fetched_disease_count: int
+    diseases: list[TargetCancerRow]
+    non_cancer_count: int
+    unclassified_count: int
+    excluded_index_count: int
+
+
+class TargetCancerEvidence(_Record):
+    by_target: dict[str, TargetCancers]
+    failed_targets: dict[str, str]
+    cancer_only: bool
+    truncated: bool
+    limitations: list[str]
+
+
+class CrossIndicationPath(_Record):
+    drug_id: str
+    drug_name: str = ""
+    target_id: str
+    target_symbol: str = ""
+    disease_id: str
+    disease_name: str = ""
+    overall_association_score: float | None = None
+
+
+class CrossIndicationGroup(_Record):
+    drug_id: str
+    target_id: str
+    other_disease_count: int
+
+
+class CrossIndicationPaths(_Record):
+    drugs: list[dict[str, Any]]
+    paths: list[CrossIndicationPath]
+    groups: list[CrossIndicationGroup]
+    incomplete: dict[str, str]
+    limitations: list[str]
+
 # operation -> the model its payload must satisfy (same keys as ADAPTERS)
 OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "resolve_disease": ResolvedEntities,
@@ -512,4 +583,7 @@ OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "compare_evidence_types": EvidenceTypeComparison,
     "normalize_comparison_dimensions": NormalizedComparison,
     "compare_targets": TargetComparison,
+    "retrieve_disease_drugs": DiseaseDrugEvidence,
+    "retrieve_target_cancers": TargetCancerEvidence,
+    "join_cross_indication_paths": CrossIndicationPaths,
 }

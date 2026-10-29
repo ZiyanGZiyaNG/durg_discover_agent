@@ -1613,3 +1613,291 @@ def test_compare_targets_needs_two_targets_in_one_disease():
     assert two_diseases.status == "error" and "one disease" in two_diseases.error
     nothing = ADAPTERS["compare_targets"].run(_ctx("compare_targets", board={}))
     assert nothing.status == "error"
+
+
+ERLOTINIB = {"id": "CHEMBL553", "name": "ERLOTINIB", "symbol": "", "entity_type": "drug"}
+OLAPARIB = {"id": "CHEMBL521686", "name": "OLAPARIB", "symbol": "", "entity_type": "drug"}
+CANCER_AREA = [{"id": "MONDO_0045024", "name": "cancer or benign tumor"}]
+
+
+def _drug_row(drug_id, name, stage):
+    return {"drug_id": drug_id, "drug_name": name, "drug_type": "Small molecule", "max_clinical_stage": stage}
+
+
+def _stub_disease_drugs(monkeypatch, drugs, total=None):
+    monkeypatch.setattr(
+        more,
+        "get_disease_drug_records",
+        lambda efo_id: {
+            "disease_id": efo_id,
+            "disease_name": PDAC["name"],
+            "total_drug_count": len(drugs) if total is None else total,
+            "fetched_drug_count": len(drugs),
+            "drugs": [dict(d) for d in drugs],
+        },
+    )
+
+
+def _disease_drug_board(with_drugs=True):
+    board = {"resolved_disease": {"d": PDAC}}
+    if with_drugs:
+        board["resolved_drug"] = {"e": ERLOTINIB, "o": OLAPARIB}
+    return board
+
+
+def test_disease_drugs_are_limited_to_named_drugs_and_gaps_are_listed(monkeypatch):
+    _stub_disease_drugs(
+        monkeypatch,
+        [_drug_row("CHEMBL553", "ERLOTINIB", "APPROVAL"), _drug_row("CHEMBL9", "OTHER", "PHASE_1")],
+    )
+    result = ADAPTERS["retrieve_disease_drugs"].run(
+        _ctx("retrieve_disease_drugs", board=_disease_drug_board())
+    )
+    found = result.payload["by_disease"][PDAC["id"]]
+    assert result.status == "success" and result.provides == ["disease_drug_evidence"]
+    assert [d["drug_id"] for d in found["drugs"]] == ["CHEMBL553"]
+    assert found["named_drugs_not_found"] == [{"drug_id": "CHEMBL521686", "drug_name": "OLAPARIB"}]
+    OUTPUT_MODELS["retrieve_disease_drugs"].model_validate(result.payload)
+
+
+def test_disease_drugs_without_named_drugs_list_every_record(monkeypatch):
+    _stub_disease_drugs(
+        monkeypatch,
+        [_drug_row("CHEMBL553", "ERLOTINIB", "APPROVAL"), _drug_row("CHEMBL9", "OTHER", "PHASE_1")],
+    )
+    result = ADAPTERS["retrieve_disease_drugs"].run(
+        _ctx("retrieve_disease_drugs", board=_disease_drug_board(with_drugs=False))
+    )
+    assert len(result.payload["by_disease"][PDAC["id"]]["drugs"]) == 2
+
+
+def test_disease_drugs_report_truncation_and_no_records(monkeypatch):
+    _stub_disease_drugs(monkeypatch, [_drug_row("CHEMBL553", "ERLOTINIB", "APPROVAL")], total=5)
+    truncated = ADAPTERS["retrieve_disease_drugs"].run(
+        _ctx("retrieve_disease_drugs", board=_disease_drug_board())
+    )
+    assert truncated.status == "partial_truncated" and truncated.truncated is True
+    _stub_disease_drugs(monkeypatch, [])
+    empty = ADAPTERS["retrieve_disease_drugs"].run(
+        _ctx("retrieve_disease_drugs", board=_disease_drug_board())
+    )
+    assert empty.status == "no_records"
+
+
+def test_disease_drugs_errors(monkeypatch):
+    no_disease = ADAPTERS["retrieve_disease_drugs"].run(_ctx("retrieve_disease_drugs", board={}))
+    assert no_disease.status == "error" and "resolved disease" in no_disease.error
+    bad_filter = ADAPTERS["retrieve_disease_drugs"].run(
+        _ctx("retrieve_disease_drugs", board=_disease_drug_board(), filters={"top_n": 3})
+    )
+    assert bad_filter.status == "error" and "unsupported" in bad_filter.error
+
+    def boom(efo_id):
+        raise OpenTargetsError("down")
+
+    monkeypatch.setattr(more, "get_disease_drug_records", boom)
+    failed = ADAPTERS["retrieve_disease_drugs"].run(
+        _ctx("retrieve_disease_drugs", board=_disease_drug_board())
+    )
+    assert failed.status == "error" and "down" in failed.error
+
+
+def _assoc_row(disease_id, name, score, areas):
+    return {
+        "disease_id": disease_id,
+        "disease_name": name,
+        "overall_association_score": score,
+        "therapeutic_areas": areas,
+    }
+
+
+_ASSOC_ROWS = [
+    _assoc_row(PDAC["id"], PDAC["name"], 0.9, CANCER_AREA),
+    _assoc_row("D_PANC_CA", "pancreatic carcinoma", 0.85, CANCER_AREA),
+    _assoc_row("D_LUNG", "lung carcinoma", 0.7, CANCER_AREA),
+    _assoc_row("D_NOONAN", "Noonan syndrome", 0.8, [{"id": "EFO_0000508", "name": "genetic disorder"}]),
+    _assoc_row("D_UNKNOWN", "unclassified disease", 0.1, []),
+]
+
+
+def _stub_assoc(monkeypatch, failing=()):
+    def fake(target_id, top_n=10):
+        if target_id in failing:
+            raise OpenTargetsError("down")
+        return {
+            "target_id": target_id,
+            "target_symbol": "SYM",
+            "requested_disease_count": top_n,
+            "returned_disease_count": len(_ASSOC_ROWS),
+            "total_associated_disease_count": 2262,
+            "diseases": [dict(row) for row in _ASSOC_ROWS],
+        }
+
+    monkeypatch.setattr(more, "get_target_associated_diseases", fake)
+    monkeypatch.setattr(
+        more,
+        "get_disease_lineage",
+        lambda efo_id: {
+            "disease_id": efo_id,
+            "disease_name": PDAC["name"],
+            "ancestor_ids": ["D_PANC_CA"],
+            "descendant_ids": [],
+        },
+    )
+
+
+def _cancer_board(*target_ids):
+    return {
+        "resolved_disease": {"d": PDAC},
+        "target_drug_evidence": {
+            "by_drug": {
+                "CHEMBL553": {
+                    "drug_id": "CHEMBL553",
+                    "drug_name": "ERLOTINIB",
+                    "targets": [
+                        {"target_id": t, "target_symbol": "SYM", "target_name": "n"}
+                        for t in target_ids
+                    ],
+                }
+            },
+            "failed_drugs": {},
+        },
+    }
+
+
+def test_target_cancers_keep_other_cancers_and_count_what_was_left_out(monkeypatch):
+    _stub_assoc(monkeypatch)
+    result = ADAPTERS["retrieve_target_cancers"].run(
+        _ctx(
+            "retrieve_target_cancers",
+            board=_cancer_board("T1"),
+            filters={"cancer_only": True, "exclude_index_disease": True},
+        )
+    )
+    found = result.payload["by_target"]["T1"]
+    assert [d["disease_id"] for d in found["diseases"]] == ["D_LUNG"]
+    assert (found["excluded_index_count"], found["non_cancer_count"], found["unclassified_count"]) == (2, 1, 1)
+    assert result.status == "partial_truncated" and result.truncated is True
+    assert result.provides == ["target_cancer_evidence"]
+    OUTPUT_MODELS["retrieve_target_cancers"].model_validate(result.payload)
+
+
+def test_target_cancers_without_cancer_only_keep_everything_with_a_flag(monkeypatch):
+    _stub_assoc(monkeypatch)
+    result = ADAPTERS["retrieve_target_cancers"].run(
+        _ctx("retrieve_target_cancers", board=_cancer_board("T1"), filters={"cancer_only": False})
+    )
+    flags = [d["is_cancer"] for d in result.payload["by_target"]["T1"]["diseases"]]
+    assert flags == [True, True, True, False, None]
+
+
+def test_target_cancers_use_resolved_targets_when_no_drug_targets_exist(monkeypatch):
+    _stub_assoc(monkeypatch)
+    result = ADAPTERS["retrieve_target_cancers"].run(
+        _ctx("retrieve_target_cancers", board={"resolved_target": {"t": KRAS}})
+    )
+    assert list(result.payload["by_target"]) == [KRAS["id"]]
+
+
+def test_one_failed_target_makes_target_cancers_partial(monkeypatch):
+    _stub_assoc(monkeypatch, failing=("T_BAD",))
+    result = ADAPTERS["retrieve_target_cancers"].run(
+        _ctx("retrieve_target_cancers", board=_cancer_board("T_OK", "T_BAD"))
+    )
+    assert result.status == "partial_error"
+    assert list(result.payload["failed_targets"]) == ["T_BAD"]
+    assert "T_OK" in result.payload["by_target"]
+
+
+def test_target_cancers_refuse_bad_input(monkeypatch):
+    _stub_assoc(monkeypatch)
+
+    def run(board, **filters):
+        return ADAPTERS["retrieve_target_cancers"].run(
+            _ctx("retrieve_target_cancers", board=board, filters=filters)
+        )
+
+    assert "unsupported" in run(_cancer_board("T1"), score={"gt": 0.5}).error
+    assert "top_n" in run(_cancer_board("T1"), top_n=101).error
+    assert "true or false" in run(_cancer_board("T1"), cancer_only="yes").error
+    no_index = run({"target_drug_evidence": _cancer_board("T1")["target_drug_evidence"]}, exclude_index_disease=True)
+    assert no_index.status == "error" and "resolved disease" in no_index.error
+    assert run({}).status == "error"
+
+
+def _join_board():
+    def disease(disease_id, name, score):
+        return {"disease_id": disease_id, "disease_name": name, "overall_association_score": score, "is_cancer": True}
+
+    return {
+        "disease_drug_evidence": {
+            "by_disease": {
+                PDAC["id"]: {
+                    "disease_id": PDAC["id"],
+                    "disease_name": PDAC["name"],
+                    "drugs": [_drug_row("CHEMBL553", "ERLOTINIB", "APPROVAL")],
+                }
+            },
+            "failed_diseases": {},
+        },
+        "target_drug_evidence": {
+            "by_drug": {
+                "CHEMBL553": {
+                    "drug_id": "CHEMBL553",
+                    "drug_name": "ERLOTINIB",
+                    "targets": [{"target_id": "T_EGFR", "target_symbol": "EGFR"}],
+                },
+                "CHEMBL521686": {
+                    "drug_id": "CHEMBL521686",
+                    "drug_name": "OLAPARIB",
+                    "targets": [{"target_id": "T_PARP1", "target_symbol": "PARP1"}],
+                },
+            },
+            "failed_drugs": {},
+        },
+        "target_cancer_evidence": {
+            "by_target": {
+                "T_EGFR": {"diseases": [disease("D_LUNG", "lung carcinoma", 0.8), disease("D_GBM", "glioblastoma", 0.6)]},
+                "T_PARP1": {"diseases": [disease("D_OVARY", "ovarian carcinoma", 0.7)]},
+            },
+            "failed_targets": {},
+            "truncated": False,
+        },
+    }
+
+
+def test_cross_indication_paths_join_drug_target_and_other_disease():
+    result = ADAPTERS["join_cross_indication_paths"].run(
+        _ctx("join_cross_indication_paths", board=_join_board())
+    )
+    assert result.status == "success" and result.provides == ["cross_indication_paths"]
+    assert [(p["drug_id"], p["disease_id"]) for p in result.payload["paths"]] == [
+        ("CHEMBL553", "D_LUNG"), ("CHEMBL553", "D_GBM"), ("CHEMBL521686", "D_OVARY"),
+    ]
+    assert {(g["target_id"], g["other_disease_count"]) for g in result.payload["groups"]} == {
+        ("T_EGFR", 2), ("T_PARP1", 1),
+    }
+    records = {d["drug_id"]: d["index_disease_records"][0] for d in result.payload["drugs"]}
+    assert records["CHEMBL553"]["found_in_source"] is True
+    assert records["CHEMBL553"]["max_clinical_stage"] == "APPROVAL"
+    assert records["CHEMBL521686"]["found_in_source"] is False
+    assert records["CHEMBL521686"]["max_clinical_stage"] is None
+    OUTPUT_MODELS["join_cross_indication_paths"].model_validate(result.payload)
+
+
+def test_cross_indication_paths_flag_targets_without_disease_data():
+    board = _join_board()
+    del board["target_cancer_evidence"]["by_target"]["T_PARP1"]
+    result = ADAPTERS["join_cross_indication_paths"].run(
+        _ctx("join_cross_indication_paths", board=board)
+    )
+    assert result.status == "partial_error"
+    assert "target:T_PARP1" in result.payload["incomplete"]
+    assert len(result.payload["paths"]) == 2
+
+
+def test_cross_indication_paths_need_all_three_inputs():
+    result = ADAPTERS["join_cross_indication_paths"].run(
+        _ctx("join_cross_indication_paths", board={})
+    )
+    assert result.status == "error" and "disease_drug_evidence" in result.error

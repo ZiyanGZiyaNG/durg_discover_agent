@@ -115,6 +115,8 @@ query Tractability($ensemblId: String!) {
     }
 }
 """
+
+
 TARGET_ASSOCIATED_DISEASES_QUERY = """
 query TargetAssociatedDiseases($ensemblId: String!, $pageSize: Int!) {
     target(ensemblId: $ensemblId) {
@@ -124,7 +126,7 @@ query TargetAssociatedDiseases($ensemblId: String!, $pageSize: Int!) {
         associatedDiseases(page: {index: 0, size: $pageSize}) {
             count
             rows {
-                disease { id name }
+                disease { id name therapeuticAreas { id name } }
                 score
                 datasourceScores { id score }
             }
@@ -807,6 +809,10 @@ def get_target_associated_diseases(ensembl_id: str, top_n: int = 10) -> dict[str
                     {"datasource_id": item["id"], "score": item["score"]}
                     for item in (row.get("datasourceScores") or [])
                 ],
+                "therapeutic_areas": [
+                    {"id": area.get("id") or "", "name": area.get("name") or ""}
+                    for area in (disease.get("therapeuticAreas") or [])
+                ],
             }
         )
     return {
@@ -945,5 +951,64 @@ def get_drug_targets_by_id(chembl_id: str) -> dict[str, Any]:
         "limitations": [
             "Targets come from curated mechanism-of-action records; "
             "no record does not mean the drug has no target."
+        ],
+    }
+
+
+DISEASE_LINEAGE_QUERY = """
+query DiseaseLineage($efoId: String!) {
+  disease(efoId: $efoId) { id name ancestors descendants }
+}
+"""
+
+DISEASE_DRUGS_QUERY = """
+query DiseaseDrugs($efoId: String!) {
+  disease(efoId: $efoId) {
+    id
+    name
+    drugAndClinicalCandidates {
+      count
+      rows { maxClinicalStage drug { id name drugType } }
+    }
+  }
+}
+"""
+
+
+def get_disease_lineage(efo_id: str) -> dict[str, Any]:
+    data = _graphql(DISEASE_LINEAGE_QUERY, {"efoId": efo_id})
+    disease = data.get("disease")
+    if not disease:
+        raise OpenTargetsError(f"Disease record unavailable: {efo_id}")
+    return {
+        "disease_id": disease["id"],
+        "disease_name": disease.get("name") or "",
+        "ancestor_ids": list(disease.get("ancestors") or []),
+        "descendant_ids": list(disease.get("descendants") or []),
+    }
+
+
+def get_disease_drug_records(efo_id: str) -> dict[str, Any]:
+    """Drug records Open Targets holds for exactly this disease id."""
+    data = _graphql(DISEASE_DRUGS_QUERY, {"efoId": efo_id})
+    disease = data.get("disease")
+    if not disease:
+        raise OpenTargetsError(f"Disease record unavailable: {efo_id}")
+    block = disease.get("drugAndClinicalCandidates") or {}
+    rows = block.get("rows") or []
+    return {
+        "disease_id": disease["id"],
+        "disease_name": disease.get("name") or "",
+        "total_drug_count": int(block.get("count") or len(rows)),
+        "fetched_drug_count": len(rows),
+        "drugs": [
+            {
+                "drug_id": row["drug"]["id"],
+                "drug_name": row["drug"].get("name") or "",
+                "drug_type": row["drug"].get("drugType"),
+                "max_clinical_stage": row.get("maxClinicalStage"),
+            }
+            for row in rows
+            if row.get("drug")
         ],
     }
