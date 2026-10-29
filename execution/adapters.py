@@ -29,6 +29,10 @@ from execution.more_adapters import (
     RetrieveDiseaseDrugsAdapter,
     RetrieveTargetCancersAdapter,
     JoinCrossIndicationPathsAdapter,
+    ClassifyKinaseTargetsAdapter,
+    DefineCoverageDenominatorsAdapter,
+    CalculateCoverageRatesAdapter,
+    CompareDiseaseRatesAdapter,
 )
 from query_opentargets import (
     OpenTargetsError,
@@ -808,4 +812,8 @@ ADAPTERS: dict[str, Adapter] = {
     "retrieve_disease_drugs": RetrieveDiseaseDrugsAdapter(),
     "retrieve_target_cancers": RetrieveTargetCancersAdapter(),
     "join_cross_indication_paths": JoinCrossIndicationPathsAdapter(),
+    "classify_kinase_targets": ClassifyKinaseTargetsAdapter(),
+    "define_coverage_denominators": DefineCoverageDenominatorsAdapter(),
+    "calculate_coverage_rates": CalculateCoverageRatesAdapter(),
+    "compare_disease_rates": CompareDiseaseRatesAdapter(),
 }

@@ -539,6 +539,69 @@ class CrossIndicationPaths(_Record):
     incomplete: dict[str, str]
     limitations: list[str]
 
+
+class TargetFamilyClass(_Record):
+    target_id: str
+    target_symbol: str = ""
+    is_kinase: bool | None
+    classes: list[str]
+
+
+class KinaseClassification(_Record):
+    targets: list[dict[str, Any]]
+    by_disease: dict[str, dict[str, Any]]
+    failed_diseases: dict[str, str]
+    classification: dict[str, TargetFamilyClass]
+    kinase_only: bool
+    limitations: list[str]
+
+
+class CoverageGroup(_Record):
+    disease_id: str
+    disease_name: str = ""
+    denominator_target_ids: list[str]
+    numerator_target_ids: list[str]
+    unevaluable_target_ids: list[str]
+    denominator_count: int
+    numerator_count: int
+    fetched_target_count: int
+    total_associated_target_count: int
+
+
+class CoverageDefinition(_Record):
+    definition: dict[str, Any]
+    by_disease: dict[str, CoverageGroup]
+    aggregation_spec: dict[str, Any] | None
+    failed_diseases: dict[str, str] = {}
+    truncated: bool
+    limitations: list[str]
+
+
+class CoverageRate(_Record):
+    disease_id: str
+    disease_name: str = ""
+    numerator: int
+    denominator: int
+    rate: float | None
+    unevaluable_count: int
+
+
+class CoverageRates(_Record):
+    definition: dict[str, Any]
+    rates: list[CoverageRate]
+    failed_diseases: dict[str, str] = {}
+    truncated: bool
+    limitations: list[str]
+
+
+class DiseaseRateComparison(_Record):
+    definition: dict[str, Any]
+    rates: list[CoverageRate]
+    differences: list[dict[str, Any]]
+    comparable: bool
+    failed_diseases: dict[str, str] = {}
+    limitations: list[str]
+
 # operation -> the model its payload must satisfy (same keys as ADAPTERS)
 OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "resolve_disease": ResolvedEntities,
@@ -586,4 +649,8 @@ OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "retrieve_disease_drugs": DiseaseDrugEvidence,
     "retrieve_target_cancers": TargetCancerEvidence,
     "join_cross_indication_paths": CrossIndicationPaths,
+    "classify_kinase_targets": KinaseClassification,
+    "define_coverage_denominators": CoverageDefinition,
+    "calculate_coverage_rates": CoverageRates,
+    "compare_disease_rates": DiseaseRateComparison,
 }

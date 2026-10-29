@@ -1012,3 +1012,36 @@ def get_disease_drug_records(efo_id: str) -> dict[str, Any]:
             if row.get("drug")
         ],
     }
+
+
+TARGET_CLASS_QUERY = """
+query TargetClasses($ensemblIds: [String!]!) {
+  targets(ensemblIds: $ensemblIds) {
+    id
+    approvedSymbol
+    targetClass { id label level }
+  }
+}
+"""
+
+
+def get_target_classes(ensembl_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Protein-class annotations for several targets, 50 per request."""
+    ids = list(dict.fromkeys(ensembl_ids))
+    found: dict[str, dict[str, Any]] = {}
+    for start in range(0, len(ids), 50):
+        data = _graphql(TARGET_CLASS_QUERY, {"ensemblIds": ids[start : start + 50]})
+        for target in data.get("targets") or []:
+            found[target["id"]] = {
+                "target_id": target["id"],
+                "target_symbol": target.get("approvedSymbol") or "",
+                "classes": [
+                    {
+                        "id": item.get("id"),
+                        "label": item.get("label") or "",
+                        "level": item.get("level") or "",
+                    }
+                    for item in (target.get("targetClass") or [])
+                ],
+            }
+    return found

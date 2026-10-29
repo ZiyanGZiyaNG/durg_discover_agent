@@ -901,7 +901,7 @@ Coverage is partial: adapters exist for 42 of 64 operations, and 11 of 18
 acceptance cases have every required operation implemented. Of the remaining 22
 operations, 11 need only Open Targets data (variant resolution, cross-indication
 drugs and cancers, safety and
-normal-tissue expression, kinase classification and coverage rates). The other
+normal-tissue expression). The other
 11 depend on trial or publication data (ClinicalTrials.gov, Europe PMC), which
 has no query module yet.
 Added since the last update: `retrieve_associated_diseases`,

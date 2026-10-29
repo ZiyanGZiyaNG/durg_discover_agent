@@ -1901,3 +1901,255 @@ def test_cross_indication_paths_need_all_three_inputs():
         _ctx("join_cross_indication_paths", board={})
     )
     assert result.status == "error" and "disease_drug_evidence" in result.error
+
+
+def _cand_row(target_id, symbol):
+    return {
+        "rank": 1,
+        "target_id": target_id,
+        "target_symbol": symbol,
+        "target_name": symbol,
+        "overall_association_score": 0.5,
+        "datasource_scores": [],
+    }
+
+
+def _kinase_candidates():
+    def disease(disease_id, name, targets, total):
+        return {
+            "disease_id": disease_id,
+            "disease_name": name,
+            "targets": [_cand_row(t, s) for t, s in targets],
+            "returned_target_count": len(targets),
+            "total_associated_target_count": total,
+        }
+
+    def union(target_id, symbol, disease_ids):
+        return {"target_id": target_id, "target_symbol": symbol, "target_name": symbol, "disease_ids": disease_ids}
+
+    both = [PDAC["id"], "D_LUNG"]
+    return {
+        "targets": [
+            union("T_EGFR", "EGFR", both),
+            union("T_KRAS", "KRAS", both),
+            union("T_BRAF", "BRAF", [PDAC["id"]]),
+            union("T_NOCLASS", "NOCLASS", ["D_LUNG"]),
+        ],
+        "by_disease": {
+            PDAC["id"]: disease(PDAC["id"], PDAC["name"], [("T_EGFR", "EGFR"), ("T_KRAS", "KRAS"), ("T_BRAF", "BRAF")], 500),
+            "D_LUNG": disease("D_LUNG", "lung carcinoma", [("T_EGFR", "EGFR"), ("T_KRAS", "KRAS"), ("T_NOCLASS", "NOCLASS")], 400),
+        },
+        "failed_diseases": {},
+    }
+
+
+_KINASE_CLASSES = [{"id": 1, "label": "Enzyme", "level": "l1"}, {"id": 2, "label": "Kinase", "level": "l2"}]
+_TARGET_CLASSES = {
+    "T_EGFR": ("EGFR", _KINASE_CLASSES),
+    "T_BRAF": ("BRAF", _KINASE_CLASSES),
+    "T_KRAS": ("KRAS", [{"id": 1, "label": "Enzyme", "level": "l1"}, {"id": 3, "label": "Hydrolase", "level": "l2"}]),
+    "T_NOCLASS": ("NOCLASS", []),
+}
+
+
+def _stub_classes(monkeypatch):
+    monkeypatch.setattr(
+        more,
+        "get_target_classes",
+        lambda ids: {
+            tid: {"target_id": tid, "target_symbol": sym, "classes": classes}
+            for tid, (sym, classes) in _TARGET_CLASSES.items()
+            if tid in ids
+        },
+    )
+
+
+def _classify(monkeypatch, **filters):
+    _stub_classes(monkeypatch)
+    return ADAPTERS["classify_kinase_targets"].run(
+        _ctx("classify_kinase_targets", board={"target_candidates": _kinase_candidates()}, filters=filters)
+    )
+
+
+def test_kinase_filter_keeps_kinases_and_counts_the_rest(monkeypatch):
+    result = _classify(monkeypatch, target_family_kinase=True)
+    assert result.status == "success"
+    assert result.provides == ["target_family_classification", "target_candidates"]
+    assert [t["target_id"] for t in result.payload["targets"]] == ["T_EGFR", "T_BRAF"]
+    pdac = result.payload["by_disease"][PDAC["id"]]
+    lung = result.payload["by_disease"]["D_LUNG"]
+    assert [t["target_id"] for t in pdac["targets"]] == ["T_EGFR", "T_BRAF"]
+    assert (lung["kinase_count"], lung["non_kinase_count"], lung["unclassified_count"]) == (1, 1, 1)
+    assert lung["total_associated_target_count"] == 400
+    assert result.payload["classification"]["T_NOCLASS"]["is_kinase"] is None
+    OUTPUT_MODELS["classify_kinase_targets"].model_validate(result.payload)
+
+
+def test_classification_without_the_filter_drops_nothing(monkeypatch):
+    result = _classify(monkeypatch)
+    lung = result.payload["by_disease"]["D_LUNG"]["targets"]
+    assert [t["is_kinase"] for t in lung] == [True, False, None]
+    assert len(result.payload["targets"]) == 4
+
+
+def test_classification_of_explicitly_resolved_targets(monkeypatch):
+    _stub_classes(monkeypatch)
+    egfr = {"id": "T_EGFR", "name": "EGFR", "symbol": "EGFR", "entity_type": "target"}
+    result = ADAPTERS["classify_kinase_targets"].run(
+        _ctx("classify_kinase_targets", board={"resolved_target": {"t": egfr}})
+    )
+    assert [t["is_kinase"] for t in result.payload["targets"]] == [True]
+    assert result.payload["by_disease"] == {}
+
+
+def test_classification_refuses_bad_input_and_reports_lookup_failure(monkeypatch):
+    _stub_classes(monkeypatch)
+    bad = _classify(monkeypatch, score=1)
+    assert bad.status == "error" and "unsupported" in bad.error
+    empty = ADAPTERS["classify_kinase_targets"].run(_ctx("classify_kinase_targets", board={}))
+    assert empty.status == "error"
+
+    def boom(ids):
+        raise OpenTargetsError("down")
+
+    monkeypatch.setattr(more, "get_target_classes", boom)
+    failed = ADAPTERS["classify_kinase_targets"].run(
+        _ctx("classify_kinase_targets", board={"target_candidates": _kinase_candidates()})
+    )
+    assert failed.status == "error" and "down" in failed.error
+
+
+def _drugs(total, fetched, *stages):
+    return {
+        "total_drug_count": total,
+        "fetched_drug_count": fetched,
+        "drugs": [{"drug_id": f"D{i}", "max_clinical_stage": s} for i, s in enumerate(stages)],
+    }
+
+
+def _coverage_board(monkeypatch, failed=None, egfr=None):
+    return {
+        "target_candidates": _classify(monkeypatch, target_family_kinase=True).payload,
+        "target_drug_evidence": {
+            "by_target": {"T_EGFR": egfr or _drugs(3, 3, "APPROVAL"), "T_BRAF": _drugs(0, 0)},
+            "failed_targets": failed or {},
+        },
+    }
+
+
+def _define(board, **filters):
+    return ADAPTERS["define_coverage_denominators"].run(
+        _ctx("define_coverage_denominators", board=board, filters=filters)
+    )
+
+
+def test_coverage_denominators_use_kinase_targets_of_each_disease(monkeypatch):
+    result = _define(_coverage_board(monkeypatch))
+    groups = result.payload["by_disease"]
+    assert groups[PDAC["id"]]["denominator_target_ids"] == ["T_EGFR", "T_BRAF"]
+    assert groups[PDAC["id"]]["numerator_target_ids"] == ["T_EGFR"]
+    assert groups["D_LUNG"]["denominator_target_ids"] == ["T_EGFR"]
+    assert groups["D_LUNG"]["numerator_target_ids"] == ["T_EGFR"]
+    assert result.status == "partial_truncated" and result.truncated is True
+    assert "any indication" in result.payload["definition"]["scope"]
+    OUTPUT_MODELS["define_coverage_denominators"].model_validate(result.payload)
+
+
+def test_stage_filter_changes_the_numerator_only(monkeypatch):
+    board = _coverage_board(monkeypatch, egfr=_drugs(3, 3, "PHASE_1"))
+    result = _define(board, max_clinical_stage={"in": ["APPROVAL"]})
+    group = result.payload["by_disease"][PDAC["id"]]
+    assert group["numerator_target_ids"] == []
+    assert group["denominator_target_ids"] == ["T_EGFR", "T_BRAF"]
+    assert result.payload["definition"]["max_clinical_stage_filter"] == ["APPROVAL"]
+
+
+def test_truncated_drug_list_without_a_qualifying_record_is_unevaluable(monkeypatch):
+    board = _coverage_board(monkeypatch, egfr=_drugs(5, 3, "PHASE_1"))
+    result = _define(board, max_clinical_stage={"in": ["APPROVAL"]})
+    group = result.payload["by_disease"][PDAC["id"]]
+    assert group["unevaluable_target_ids"] == ["T_EGFR"]
+    assert group["denominator_target_ids"] == ["T_BRAF"]
+    assert result.status == "partial_error"
+
+
+def test_failed_drug_retrieval_is_unevaluable_not_uncovered(monkeypatch):
+    result = _define(_coverage_board(monkeypatch, failed={"T_BRAF": "down"}))
+    group = result.payload["by_disease"][PDAC["id"]]
+    assert group["unevaluable_target_ids"] == ["T_BRAF"]
+    assert group["denominator_target_ids"] == ["T_EGFR"]
+    assert result.status == "partial_error"
+
+
+def test_coverage_definition_needs_classified_targets_and_drug_evidence(monkeypatch):
+    assert _define({}).status == "error"
+    board = _coverage_board(monkeypatch)
+    del board["target_drug_evidence"]
+    assert "target_drug_evidence" in _define(board).error
+    bad = _define(_coverage_board(monkeypatch), top_n=3)
+    assert bad.status == "error" and "unsupported" in bad.error
+
+
+def test_rates_divide_the_defined_numerator_by_the_defined_denominator(monkeypatch):
+    definition = _define(_coverage_board(monkeypatch))
+    result = ADAPTERS["calculate_coverage_rates"].run(
+        _ctx("calculate_coverage_rates", board={"coverage_definition": definition.payload})
+    )
+    by_disease = {r["disease_id"]: r for r in result.payload["rates"]}
+    pdac = by_disease[PDAC["id"]]
+    assert (pdac["numerator"], pdac["denominator"], pdac["rate"]) == (1, 2, 0.5)
+    assert by_disease["D_LUNG"]["rate"] == 1.0
+    assert result.status == "partial_truncated"
+    OUTPUT_MODELS["calculate_coverage_rates"].model_validate(result.payload)
+
+
+def test_empty_denominator_gives_no_rate_not_zero():
+    board = {
+        "coverage_definition": {
+            "definition": {},
+            "by_disease": {
+                "D1": {"disease_id": "D1", "denominator_count": 0, "numerator_count": 0, "unevaluable_target_ids": []}
+            },
+        }
+    }
+    result = ADAPTERS["calculate_coverage_rates"].run(_ctx("calculate_coverage_rates", board=board))
+    assert result.payload["rates"][0]["rate"] is None
+    assert result.status == "no_records"
+    assert ADAPTERS["calculate_coverage_rates"].run(_ctx("calculate_coverage_rates", board={})).status == "error"
+
+
+def _rate(disease_id, rate, denominator=4):
+    return {
+        "disease_id": disease_id,
+        "disease_name": disease_id,
+        "numerator": 0 if rate is None else int(rate * denominator),
+        "denominator": denominator,
+        "rate": rate,
+        "unevaluable_count": 0,
+    }
+
+
+def _compare_rates(*rates, **extra):
+    board = {"coverage_rates": {"definition": {"numerator": "x"}, "truncated": False, "rates": list(rates)}}
+    return ADAPTERS["compare_disease_rates"].run(_ctx("compare_disease_rates", board=board, **extra))
+
+
+def test_rates_are_compared_under_one_definition():
+    result = _compare_rates(_rate("A", 0.5), _rate("B", 1.0))
+    assert result.status == "success" and result.payload["comparable"] is True
+    assert result.payload["differences"][0]["rate_difference"] == -0.5
+    OUTPUT_MODELS["compare_disease_rates"].model_validate(result.payload)
+
+
+def test_a_disease_without_a_rate_is_not_compared_as_zero():
+    result = _compare_rates(_rate("A", 0.5), _rate("B", None))
+    assert result.payload["comparable"] is False
+    assert result.payload["differences"][0]["rate_difference"] is None
+    assert result.status == "no_records"
+
+
+def test_rate_comparison_needs_two_diseases_and_takes_no_filters():
+    assert "two diseases" in _compare_rates(_rate("A", 0.5)).error
+    bad = _compare_rates(_rate("A", 0.5), _rate("B", 1.0), filters={"top_n": 3})
+    assert bad.status == "error" and "unsupported" in bad.error
+    assert ADAPTERS["compare_disease_rates"].run(_ctx("compare_disease_rates", board={})).status == "error"

@@ -316,6 +316,10 @@ _OPERATION_CONTRACTS: dict[str, dict] = {
     "retrieve_disease_drugs": {"requires_all": ["resolved_disease"], "provides": ["disease_drug_evidence"]},
     "retrieve_target_cancers": {"requires_any": ["target_drug_evidence", "resolved_target", "target_candidates"], "provides": ["target_cancer_evidence"]},
     "join_cross_indication_paths": {"requires_all": ["disease_drug_evidence", "target_drug_evidence", "target_cancer_evidence"], "provides": ["cross_indication_paths"]},
+    "classify_kinase_targets": {"requires_any": ["target_candidates", "resolved_target"], "provides": ["target_family_classification", "target_candidates"]},
+    "define_coverage_denominators": {"requires_all": ["target_candidates", "target_drug_evidence"], "provides": ["coverage_definition"]},
+    "calculate_coverage_rates": {"requires_all": ["coverage_definition"], "provides": ["coverage_rates"]},
+    "compare_disease_rates": {"requires_all": ["coverage_rates"], "provides": ["disease_rate_comparison"]},
 }
 
 

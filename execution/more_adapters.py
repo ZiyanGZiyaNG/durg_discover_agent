@@ -32,6 +32,7 @@ from query_opentargets import (
     get_association_datasource_types,
     get_disease_drug_records,
     get_disease_lineage,
+    get_target_classes,
 )
 from datetime import datetime, timezone
 
@@ -1936,5 +1937,438 @@ class JoinCrossIndicationPathsAdapter:
             fetched_count=len(paths),
             truncated=truncated,
             error="; ".join(f"{k}: {v}" for k, v in incomplete.items()) or None,
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+KINASE_LABEL = "kinase"
+
+
+def _kinase_flag(record: dict[str, Any] | None) -> bool | None:
+    classes = (record or {}).get("classes") or []
+    if not classes:
+        return None
+    return any(
+        str(item.get("label") or "").strip().lower() == KINASE_LABEL for item in classes
+    )
+
+
+class ClassifyKinaseTargetsAdapter:
+    """Label targets kinase / non-kinase from Open Targets protein-class annotations."""
+
+    source = "open_targets"
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        unsupported = sorted(set(ctx.filters) - {"target_family_kinase"})
+        if unsupported:
+            return error_result(
+                ctx, self.source, start, f"unsupported filter(s): {unsupported}"
+            )
+        try:
+            kinase_only = _flag(ctx.filters, "target_family_kinase", False)
+        except ValueError as exc:
+            return error_result(ctx, self.source, start, str(exc))
+        explicit = _resolved_for_step(ctx, "target", "resolved_target")
+        candidates = ctx.board.get("target_candidates") or {}
+        if explicit:
+            rows = [
+                {
+                    "target_id": t["id"],
+                    "target_symbol": t.get("symbol") or "",
+                    "target_name": t.get("name") or "",
+                }
+                for t in explicit
+            ]
+            candidates = {}
+        elif candidates.get("targets"):
+            rows = candidates["targets"]
+        else:
+            return error_result(
+                ctx,
+                self.source,
+                start,
+                "classify_kinase_targets needs resolved targets or target_candidates",
+            )
+        by_disease = candidates.get("by_disease") or {}
+        ids = list(
+            dict.fromkeys(
+                [row["target_id"] for row in rows]
+                + [
+                    row["target_id"]
+                    for found in by_disease.values()
+                    for row in found.get("targets") or []
+                ]
+            )
+        )
+        try:
+            found = get_target_classes(ids)
+        except OpenTargetsError as exc:
+            return error_result(ctx, self.source, start, str(exc))
+        symbols = {row["target_id"]: row.get("target_symbol") or "" for row in rows}
+        for found_disease in by_disease.values():
+            for row in found_disease.get("targets") or []:
+                symbols.setdefault(row["target_id"], row.get("target_symbol") or "")
+        classification = {}
+        for target_id in ids:
+            record = found.get(target_id)
+            classification[target_id] = {
+                "target_id": target_id,
+                "target_symbol": symbols.get(target_id)
+                or (record or {}).get("target_symbol")
+                or "",
+                "is_kinase": _kinase_flag(record),
+                "classes": [item["label"] for item in (record or {}).get("classes") or []],
+            }
+
+        def annotate(row_list: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            kept = []
+            for row in row_list:
+                flag = classification[row["target_id"]]["is_kinase"]
+                if kinase_only and flag is not True:
+                    continue
+                kept.append({**row, "is_kinase": flag})
+            return kept
+
+        def tally(row_list: list[dict[str, Any]]) -> dict[str, int]:
+            flags = [classification[row["target_id"]]["is_kinase"] for row in row_list]
+            return {
+                "kinase_count": flags.count(True),
+                "non_kinase_count": flags.count(False),
+                "unclassified_count": flags.count(None),
+            }
+
+        by_disease_out = {}
+        for disease_id, found_disease in by_disease.items():
+            listed = found_disease.get("targets") or []
+            by_disease_out[disease_id] = {
+                **found_disease,
+                **tally(listed),
+                "fetched_target_count_before_family_filter": len(listed),
+                "targets": annotate(listed),
+            }
+        targets_out = annotate(rows)
+        limitations = [
+            "Family comes from Open Targets target-class annotations; a target counts "
+            "as kinase when one of its classes is labelled 'Kinase'. A target with no "
+            "class annotation is unclassified, not non-kinase.",
+            *(candidates.get("limitations") or []),
+        ]
+        if kinase_only:
+            limitations.append(
+                "Only kinase targets are kept; non-kinase and unclassified targets are "
+                "counted per disease but dropped from the lists."
+            )
+        payload = {
+            "targets": targets_out,
+            "by_disease": by_disease_out,
+            "failed_diseases": candidates.get("failed_diseases") or {},
+            "classification": classification,
+            "kinase_only": kinase_only,
+            "limitations": limitations,
+        }
+        for key in ("disease_id", "disease_name"):
+            if key in candidates:
+                payload[key] = candidates[key]
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status="success" if targets_out else "no_records",
+            source=self.source,
+            payload=payload,
+            provides=["target_family_classification", "target_candidates"],
+            total_count=len(ids),
+            fetched_count=len(found),
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+
+def _stage_filter(filters: dict[str, Any]) -> set[str] | None:
+    unsupported = sorted(set(filters) - {"max_clinical_stage"})
+    if unsupported:
+        raise ValueError(f"unsupported filter(s): {unsupported}")
+    if "max_clinical_stage" not in filters:
+        return None
+    condition = filters["max_clinical_stage"]
+    if isinstance(condition, dict):
+        if set(condition) - {"in", "eq"}:
+            raise ValueError("max_clinical_stage filter supports only 'in' and 'eq'")
+        condition = condition.get("in", condition.get("eq"))
+    if condition is None:
+        raise ValueError("max_clinical_stage filter has no value")
+    values = condition if isinstance(condition, list) else [condition]
+    return {str(value) for value in values}
+
+
+class DefineCoverageDenominatorsAdapter:
+    """Fix the population, numerator and denominator before any rate is computed."""
+
+    source = "local_analysis"
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        try:
+            stages = _stage_filter(ctx.filters)
+        except ValueError as exc:
+            return error_result(ctx, self.source, start, str(exc))
+        candidates = ctx.board.get("target_candidates") or {}
+        classification = candidates.get("classification")
+        by_disease = candidates.get("by_disease")
+        if not classification or not by_disease:
+            return error_result(
+                ctx,
+                self.source,
+                start,
+                "define_coverage_denominators needs classified targets per disease "
+                "(classify_kinase_targets after discover_targets_per_disease)",
+            )
+        evidence = ctx.board.get("target_drug_evidence") or {}
+        by_target = evidence.get("by_target")
+        if by_target is None:
+            return error_result(
+                ctx,
+                self.source,
+                start,
+                "define_coverage_denominators needs target_drug_evidence from retrieve_target_drugs",
+            )
+        failed_targets = evidence.get("failed_targets") or {}
+        groups = {}
+        for disease_id, found in by_disease.items():
+            population = list(
+                dict.fromkeys(
+                    row["target_id"]
+                    for row in found.get("targets") or []
+                    if (classification.get(row["target_id"]) or {}).get("is_kinase") is True
+                )
+            )
+            numerator, denominator, unevaluable = [], [], []
+            for target_id in population:
+                record = by_target.get(target_id)
+                if target_id in failed_targets or record is None:
+                    unevaluable.append(target_id)
+                    continue
+                qualifying = [
+                    drug
+                    for drug in record.get("drugs") or []
+                    if stages is None or drug.get("max_clinical_stage") in stages
+                ]
+                if qualifying:
+                    denominator.append(target_id)
+                    numerator.append(target_id)
+                elif stages is not None and record.get("fetched_drug_count", 0) < record.get(
+                    "total_drug_count", 0
+                ):
+                    unevaluable.append(target_id)
+                else:
+                    denominator.append(target_id)
+            fetched = found.get(
+                "returned_target_count",
+                found.get("fetched_target_count_before_family_filter", 0),
+            )
+            groups[disease_id] = {
+                "disease_id": disease_id,
+                "disease_name": found.get("disease_name") or "",
+                "denominator_target_ids": denominator,
+                "numerator_target_ids": numerator,
+                "unevaluable_target_ids": unevaluable,
+                "denominator_count": len(denominator),
+                "numerator_count": len(numerator),
+                "fetched_target_count": fetched,
+                "total_associated_target_count": found.get(
+                    "total_associated_target_count", fetched
+                ),
+            }
+        failed_diseases = candidates.get("failed_diseases") or {}
+        truncated = any(
+            group["fetched_target_count"] < group["total_associated_target_count"]
+            for group in groups.values()
+        )
+        any_unevaluable = any(group["unevaluable_target_ids"] for group in groups.values())
+        if failed_diseases or any_unevaluable:
+            status = "partial_error"
+        elif not any(group["denominator_count"] for group in groups.values()):
+            status = "no_records"
+        elif truncated:
+            status = "partial_truncated"
+        else:
+            status = "success"
+        stage_text = (
+            f"whose max_clinical_stage is one of {sorted(stages)}"
+            if stages
+            else "at any clinical stage"
+        )
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status=status,
+            source=self.source,
+            payload={
+                "definition": {
+                    "population": "targets labelled kinase among the associated targets "
+                    "fetched for each disease",
+                    "numerator": "population targets with at least one Open Targets drug "
+                    f"or clinical-candidate record {stage_text}",
+                    "scope": "any indication: coverage describes the target, not the disease",
+                    "unevaluable": "population targets whose drug retrieval failed, or was "
+                    "truncated without a qualifying record; left out of the denominator",
+                    "max_clinical_stage_filter": sorted(stages) if stages else None,
+                },
+                "by_disease": groups,
+                "aggregation_spec": ctx.aggregation,
+                "failed_diseases": failed_diseases,
+                "truncated": truncated,
+                "limitations": [
+                    "The denominator covers only the associated targets fetched for each "
+                    "disease (see fetched_target_count versus total_associated_target_count), "
+                    "not every target of the disease.",
+                    "A target with no drug record counts as not covered only when its drug "
+                    "retrieval succeeded; a failed retrieval is unevaluable.",
+                    "A stage is the Open Targets record, not an approval conclusion.",
+                ],
+            },
+            provides=["coverage_definition"],
+            total_count=sum(g["total_associated_target_count"] for g in groups.values()),
+            fetched_count=sum(g["fetched_target_count"] for g in groups.values()),
+            truncated=truncated,
+            error="; ".join(f"{d}: {m}" for d, m in failed_diseases.items()) or None,
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+
+class CalculateCoverageRatesAdapter:
+    """Divide the defined numerator by the defined denominator; nothing else changes."""
+
+    source = "local_analysis"
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        if ctx.filters:
+            return error_result(
+                ctx, self.source, start, f"unsupported filter(s): {sorted(ctx.filters)}"
+            )
+        data = ctx.board.get("coverage_definition")
+        if not data or not data.get("by_disease"):
+            return error_result(
+                ctx, self.source, start, "calculate_coverage_rates needs coverage_definition"
+            )
+        rates = []
+        for disease_id, group in data["by_disease"].items():
+            denominator = group["denominator_count"]
+            numerator = group["numerator_count"]
+            rates.append(
+                {
+                    "disease_id": disease_id,
+                    "disease_name": group.get("disease_name") or "",
+                    "numerator": numerator,
+                    "denominator": denominator,
+                    "rate": numerator / denominator if denominator else None,
+                    "unevaluable_count": len(group["unevaluable_target_ids"]),
+                }
+            )
+        failed_diseases = data.get("failed_diseases") or {}
+        truncated = bool(data.get("truncated"))
+        has_rate = any(item["rate"] is not None for item in rates)
+        if failed_diseases:
+            status = "partial_error"
+        elif not has_rate:
+            status = "no_records"
+        elif truncated:
+            status = "partial_truncated"
+        else:
+            status = "success"
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status=status,
+            source=self.source,
+            payload={
+                "definition": data["definition"],
+                "rates": rates,
+                "failed_diseases": failed_diseases,
+                "truncated": truncated,
+                "limitations": [
+                    "A rate is computed only from the defined numerator and denominator; "
+                    "an empty denominator gives no rate (null), never zero.",
+                    "Rates are fractions of targets, not of patients or drugs.",
+                ],
+            },
+            provides=["coverage_rates"],
+            total_count=len(rates),
+            fetched_count=len(rates),
+            truncated=truncated,
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+
+class CompareDiseaseRatesAdapter:
+    """Side-by-side coverage rates under one definition; no significance test."""
+
+    source = "local_analysis"
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        if ctx.filters:
+            return error_result(
+                ctx, self.source, start, f"unsupported filter(s): {sorted(ctx.filters)}"
+            )
+        data = ctx.board.get("coverage_rates")
+        if not data or not data.get("rates"):
+            return error_result(
+                ctx, self.source, start, "compare_disease_rates needs coverage_rates"
+            )
+        rates = data["rates"]
+        if len(rates) < 2:
+            return error_result(
+                ctx,
+                self.source,
+                start,
+                "compare_disease_rates needs rates for at least two diseases",
+            )
+        differences = []
+        for index, first in enumerate(rates):
+            for second in rates[index + 1 :]:
+                both = first["rate"] is not None and second["rate"] is not None
+                differences.append(
+                    {
+                        "disease_a_id": first["disease_id"],
+                        "disease_a_name": first.get("disease_name") or "",
+                        "disease_b_id": second["disease_id"],
+                        "disease_b_name": second.get("disease_name") or "",
+                        "rate_difference": first["rate"] - second["rate"] if both else None,
+                    }
+                )
+        failed_diseases = data.get("failed_diseases") or {}
+        truncated = bool(data.get("truncated"))
+        comparable = all(item["rate"] is not None for item in rates)
+        if failed_diseases:
+            status = "partial_error"
+        elif not any(d["rate_difference"] is not None for d in differences):
+            status = "no_records"
+        elif truncated:
+            status = "partial_truncated"
+        else:
+            status = "success"
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status=status,
+            source=self.source,
+            payload={
+                "definition": data["definition"],
+                "rates": [dict(item) for item in rates],
+                "differences": differences,
+                "comparable": comparable,
+                "failed_diseases": failed_diseases,
+                "limitations": [
+                    "All rates use one population, numerator and denominator definition. "
+                    "rate_difference is the first disease minus the second.",
+                    "No significance test is run; rates on small denominators are unstable, "
+                    "so read them together with numerator and denominator.",
+                    "A disease without a rate has no comparable value; it is not zero.",
+                ],
+            },
+            provides=["disease_rate_comparison"],
+            total_count=len(differences),
+            fetched_count=len(differences),
+            truncated=truncated,
             elapsed_seconds=time.monotonic() - start,
         )
