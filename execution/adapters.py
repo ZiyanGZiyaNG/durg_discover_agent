@@ -1,7 +1,21 @@
 from __future__ import annotations
 import time
 from collections.abc import Callable
+from execution.common import _collect_per_target, _resolved_for_step, _targets_for_step
 from execution.contracts import Adapter, StepContext, StepResult
+from execution.more_adapters import (
+    CompareAssociationEvidenceAdapter,
+    DiscoverTargetsPerDiseaseAdapter,
+    IntersectTargetsAdapter,
+    JoinDiseaseTargetDrugAdapter,
+    RankCandidatesAdapter,
+    RankDatasourceContributionsAdapter,
+    ResolveEntitiesAdapter,
+    RetrieveClinicalStageAdapter,
+    RetrieveDatasourceScoresAdapter,
+    RetrieveExactPairsAdapter,
+    RetrieveMechanismsAdapter,
+)
 from query_opentargets import (
     OpenTargetsError,
     discover_disease_targets,
@@ -23,6 +37,7 @@ from execution.analysis import (
     stratify_targets,
 )
 
+from execution.more_adapters import RankDiseasesAdapter
 
 
 class ResolveEntityAdapter:
@@ -78,48 +93,6 @@ class ResolveEntityAdapter:
             fetched_count=len(resolved),
             elapsed_seconds=time.monotonic() - start,
         )
-
-
-def _resolved_for_step(
-    ctx: StepContext, entity_type: str, capability: str
-) -> list[dict]:
-    on_board = ctx.board.get(capability, {})
-    named = [
-        ref
-        for ref, entity in ctx.entities.items()
-        if entity.get("entity_type") == entity_type
-    ]
-    if not named:
-        return list(on_board.values())
-    return [on_board[ref] for ref in named if ref in on_board]
-
-
-def _targets_for_step(ctx: StepContext) -> list[dict]:
-    explicit = _resolved_for_step(ctx, "target", "resolved_target")
-    if explicit:
-        return explicit
-    candidates = ctx.board.get("target_candidates") or {}
-    return [
-        {
-            "id": target["target_id"],
-            "symbol": target["target_symbol"],
-            "name": target["target_name"],
-        }
-        for target in candidates.get("targets", [])
-    ]
-
-
-def _collect_per_target(
-    targets: list[dict], fetch: Callable[[dict], dict]
-) -> tuple[dict[str, dict], dict[str, str]]:
-    by_target: dict[str, dict] = {}
-    failed_targets: dict[str, str] = {}
-    for target in targets:
-        try:
-            by_target[target["id"]] = fetch(target)
-        except OpenTargetsError as exc:
-            failed_targets[target["id"]] = str(exc)
-    return by_target, failed_targets
 
 
 class RetrieveExactPairAdapter:
@@ -710,10 +683,30 @@ ADAPTERS: dict[str, Adapter] = {
     "retrieve_tractability": RetrieveTractabilityAdapter(),
     "rank_targets": RankTargetsAdapter(),
     "stratify_target_evidence_layers": StratifyTargetEvidenceAdapter(),
-    "discover_targets_per_disease": DiscoverTargetsAdapter(),
+    "discover_targets_per_disease": DiscoverTargetsPerDiseaseAdapter(),
     "filter_targets": FilterTargetsAdapter(),
     "retrieve_approved_indications": RetrieveApprovedIndicationsAdapter(),
     "check_indication": CheckIndicationAdapter(),
     "resolve_drug": ResolveEntityAdapter("drug", "resolved_drug"),
     "retrieve_drug_targets": RetrieveDrugTargetsAdapter(),
+    "resolve_disease_target": ResolveEntitiesAdapter(
+        {"disease": "resolved_disease", "target": "resolved_target"}
+    ),
+    "resolve_disease_targets": ResolveEntitiesAdapter(
+        {"disease": "resolved_disease", "target": "resolved_target"}
+    ),
+    "resolve_disease_and_drugs": ResolveEntitiesAdapter(
+        {"disease": "resolved_disease", "drug": "resolved_drug"}
+    ),
+    "retrieve_exact_pairs": RetrieveExactPairsAdapter(),
+    "retrieve_datasource_scores": RetrieveDatasourceScoresAdapter(),
+    "rank_datasource_contributions": RankDatasourceContributionsAdapter(),
+    "intersect_targets": IntersectTargetsAdapter(),
+    "compare_association_evidence": CompareAssociationEvidenceAdapter(),
+    "join_disease_target_drug": JoinDiseaseTargetDrugAdapter(),
+    "rank_candidates": RankCandidatesAdapter(),
+    "retrieve_mechanisms": RetrieveMechanismsAdapter(),
+    "retrieve_mechanisms_and_modalities": RetrieveMechanismsAdapter(with_modality=True),
+    "retrieve_clinical_stage": RetrieveClinicalStageAdapter(),
+    "rank_diseases": RankDiseasesAdapter(),
 }

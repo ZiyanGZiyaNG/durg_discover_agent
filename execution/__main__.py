@@ -14,6 +14,11 @@ from schemas import QueryManifestV2
 from execution.compiler import FAILED, PlanRefusedError, compile_plan, run_plan
 
 
+def _cell(row, key):
+    value = row.get(key)
+    return '-' if value is None else value
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m execution", description=__doc__)
     parser.add_argument("plan", type=Path, help="QueryManifestV2 JSON file")
@@ -75,8 +80,8 @@ def main(argv: list[str] | None = None) -> int:
                 f"{row['ranked_position']:>3}  {row['target_symbol']:<10}"
                 f"{row['overall_association_score']:>7.3f}  "
                 f"{row.get('target_translation_layer', '-'):<26}"
-                f"{row.get('known_drug_count', '-'):>6}"
-                f"{row.get('tractable_bucket_count', '-'):>6}"
+                f"{_cell(row, 'known_drug_count'):>6}"
+                f"{_cell(row, 'tractable_bucket_count'):>6}"
             )
         if payload.get("rule_version"):
             print(

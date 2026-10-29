@@ -287,7 +287,7 @@ _OPERATION_CONTRACTS: dict[str, dict] = {
     "retrieve_exact_pairs": {"requires_all": ["resolved_disease", "resolved_target"], "provides": ["disease_target_association"], "required_safeguards": ["association_score_not_probability", "association_does_not_imply_efficacy"]},
     "retrieve_target_drugs": {"requires_any": ["resolved_target", "target_candidates"], "provides": ["target_drug_evidence"]},
     "retrieve_drug_targets": {"requires_all": ["resolved_drug"], "provides": ["target_drug_evidence"]},
-        "check_indication": {"requires_all": ["approval_evidence"], "provides": ["indication_check"], "required_safeguards": ["approval_requires_explicit_source", "database_approval_requires_official_confirmation", "missing_not_negative"]},
+    "check_indication": {"requires_all": ["approval_evidence"], "provides": ["indication_check"], "required_safeguards": ["approval_requires_explicit_source", "database_approval_requires_official_confirmation", "missing_not_negative"]},
     "retrieve_tractability": {"requires_any": ["resolved_target", "target_candidates"], "provides": ["tractability_evidence"], "required_safeguards": ["tractability_not_efficacy"]},
     "retrieve_approved_indications": {"provides": ["approval_evidence"]},
     "retrieve_clinical_trials": {"provides": ["clinical_trial_evidence"]},
@@ -297,6 +297,8 @@ _OPERATION_CONTRACTS: dict[str, dict] = {
     "stratify_target_evidence_layers": {"requires_all": ["disease_target_association", "target_drug_evidence", "tractability_evidence"], "provides": ["stratified_target_evidence"], "requires_aggregation": True, "reserved_outputs": ["target_translation_layer"]},
     "aggregate_category_distribution": {"requires_aggregation": True, "reserved_outputs": ["category_distribution"]},
     "rank_targets": {"requires_any": ["target_candidates", "stratified_target_evidence"]},
+    "retrieve_associated_diseases": {"requires_all": ["resolved_target"], "provides": ["disease_target_association"]},
+    "rank_diseases": {"requires_all": ["disease_target_association"], "provides": ["disease_ranking"]},
 }
 
 
