@@ -26,6 +26,7 @@ from query_opentargets import (
     get_drug_targets_by_id,
     resolve_entity,
     resolve_mention,
+    get_target_associated_diseases,
 )
 
 
@@ -709,6 +710,66 @@ class RetrieveClinicalStageAdapter:
             elapsed_seconds=time.monotonic() - start,
         )
 
+
+
+class RetrieveAssociatedDiseasesAdapter:
+    """Top associated diseases for each resolved target, kept as separate pairs."""
+
+    source = "open_targets"
+    default_top_n = 10
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        targets = _resolved_for_step(ctx, "target", "resolved_target")
+        if not targets:
+            return error_result(
+                ctx,
+                self.source,
+                start,
+                "retrieve_associated_diseases needs at least one resolved target",
+            )
+        top_n = ctx.filters.get("top_n", self.default_top_n)
+        if isinstance(top_n, bool) or not isinstance(top_n, int) or not 1 <= top_n <= 100:
+            return error_result(
+                ctx, self.source, start, "top_n must be an integer between 1 and 100"
+            )
+        by_target, failed = _collect_per_target(
+            targets,
+            lambda target: get_target_associated_diseases(target["id"], top_n=top_n),
+        )
+        errors = "; ".join(f"{tid}: {msg}" for tid, msg in failed.items())
+        if not by_target:
+            return error_result(ctx, self.source, start, errors)
+        pairs = [row for found in by_target.values() for row in found["diseases"]]
+        total = sum(found["total_associated_disease_count"] for found in by_target.values())
+        if failed:
+            status = "partial_error"
+        else:
+            status = "success" if pairs else "no_records"
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status=status,
+            source=self.source,
+            payload={
+                "pairs": pairs,
+                "by_target": {
+                    tid: {key: value for key, value in found.items() if key != "diseases"}
+                    for tid, found in by_target.items()
+                },
+                "failed_targets": failed,
+                "limitations": [
+                    f"Only the top {top_n} diseases of each target were fetched.",
+                    "An association score is not a probability and does not imply efficacy.",
+                ],
+            },
+            provides=["disease_target_association"],
+            total_count=total,
+            fetched_count=len(pairs),
+            truncated=len(pairs) < total,
+            error=errors or None,
+            elapsed_seconds=time.monotonic() - start,
+        )
 
 class RankDiseasesAdapter:
     """Rank diseases by a numeric disease-target association metric."""

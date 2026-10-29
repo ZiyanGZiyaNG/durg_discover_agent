@@ -96,6 +96,23 @@ query Tractability($ensemblId: String!) {
     }
 }
 """
+TARGET_ASSOCIATED_DISEASES_QUERY = """
+query TargetAssociatedDiseases($ensemblId: String!, $pageSize: Int!) {
+    target(ensemblId: $ensemblId) {
+        id
+        approvedSymbol
+        approvedName
+        associatedDiseases(page: {index: 0, size: $pageSize}) {
+            count
+            rows {
+                disease { id name }
+                score
+                datasourceScores { id score }
+            }
+        }
+    }
+}
+"""
 
 
 DRUG_INDICATIONS_QUERY = """
@@ -128,6 +145,7 @@ query DrugTargets($chemblId: String!) {
   drug(chemblId: $chemblId) {
     id
     name
+    drugType
     mechanismsOfAction {
       rows {
         actionType
@@ -735,6 +753,53 @@ def get_target_tractability_by_id(ensembl_id: str) -> dict[str, Any]:
 
 
 
+def get_target_associated_diseases(ensembl_id: str, top_n: int = 10) -> dict[str, Any]:
+    """Return the top diseases associated with one target, by Open Targets score."""
+    if not 1 <= top_n <= 100:
+        raise ValueError("top_n must be between 1 and 100")
+    data = _graphql(
+        TARGET_ASSOCIATED_DISEASES_QUERY,
+        {"ensemblId": ensembl_id, "pageSize": top_n},
+    )
+    target = data.get("target")
+    if not target:
+        raise OpenTargetsError(f"Target record unavailable: {ensembl_id}")
+    association = target.get("associatedDiseases") or {}
+    rows = sorted(
+        association.get("rows") or [],
+        key=lambda row: (
+            -(row.get("score") or 0.0),
+            (row.get("disease") or {}).get("id") or "",
+        ),
+    )[:top_n]
+    diseases = []
+    for rank, row in enumerate(rows, start=1):
+        disease = row.get("disease") or {}
+        diseases.append(
+            {
+                "rank": rank,
+                "disease_id": disease.get("id") or "",
+                "disease_name": disease.get("name") or "",
+                "target_id": target["id"],
+                "target_symbol": target.get("approvedSymbol") or "",
+                "target_name": target.get("approvedName") or "",
+                "overall_association_score": row.get("score"),
+                "datasource_scores": [
+                    {"datasource_id": item["id"], "score": item["score"]}
+                    for item in (row.get("datasourceScores") or [])
+                ],
+            }
+        )
+    return {
+        "target_id": target["id"],
+        "target_symbol": target.get("approvedSymbol") or "",
+        "requested_disease_count": top_n,
+        "returned_disease_count": len(diseases),
+        "total_associated_disease_count": int(association.get("count") or len(diseases)),
+        "diseases": diseases,
+    }
+
+
 
 def get_drug_indications_by_id(chembl_id: str) -> dict[str, Any]:
     data = _graphql(DRUG_INDICATIONS_QUERY, {"chemblId": chembl_id})
@@ -802,6 +867,7 @@ def get_drug_targets_by_id(chembl_id: str) -> dict[str, Any]:
     return {
         "drug_id": drug["id"],
         "drug_name": drug.get("name") or "",
+        "drug_type": drug.get("drugType"),
         "mechanism_count": len(rows),
         "mechanisms": mechanisms,
         "targets": list(targets.values()),

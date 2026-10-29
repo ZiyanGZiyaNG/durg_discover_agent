@@ -905,3 +905,114 @@ def test_rank_diseases_by_a_text_metric_is_refused():
         )
     )
     assert result.status == "error" and "not numeric" in result.error
+
+
+# ---------- retrieve_associated_diseases ----------
+
+def _target_diseases(target, rows, total=None):
+    diseases = [
+        {
+            "rank": rank,
+            "disease_id": disease_id,
+            "disease_name": name,
+            "target_id": target["id"],
+            "target_symbol": target["symbol"],
+            "target_name": target["name"],
+            "overall_association_score": score,
+            "datasource_scores": [],
+        }
+        for rank, (disease_id, name, score) in enumerate(rows, start=1)
+    ]
+    return {
+        "target_id": target["id"],
+        "target_symbol": target["symbol"],
+        "requested_disease_count": 10,
+        "returned_disease_count": len(diseases),
+        "total_associated_disease_count": total or len(diseases),
+        "diseases": diseases,
+    }
+
+
+def _fake_associated_diseases(found, failing=()):
+    def fake(ensembl_id, top_n=10):
+        if ensembl_id in failing:
+            raise OpenTargetsError("timeout")
+        return found[ensembl_id]
+
+    return fake
+
+
+def _targets_board(*targets):
+    return {"resolved_target": {f"e{i}": t for i, t in enumerate(targets, start=1)}}
+
+
+KRAS_DISEASES = _target_diseases(
+    KRAS, [(PDAC["id"], PDAC["name"], 0.9), (CRC["id"], CRC["name"], 0.8)]
+)
+TP53_DISEASES = _target_diseases(TP53, [(CRC["id"], CRC["name"], 0.7)])
+
+
+def _run_associated(monkeypatch, board, found=None, failing=(), **extra):
+    monkeypatch.setattr(
+        more,
+        "get_target_associated_diseases",
+        _fake_associated_diseases(
+            found or {KRAS["id"]: KRAS_DISEASES, TP53["id"]: TP53_DISEASES}, failing
+        ),
+    )
+    return ADAPTERS["retrieve_associated_diseases"].run(
+        _ctx("retrieve_associated_diseases", board=board, **extra)
+    )
+
+
+def test_associated_diseases_are_collected_for_the_resolved_target(monkeypatch):
+    result = _run_associated(monkeypatch, _targets_board(KRAS))
+    assert result.status == "success"
+    assert result.provides == ["disease_target_association"]
+    assert [p["disease_id"] for p in result.payload["pairs"]] == [PDAC["id"], CRC["id"]]
+    assert result.truncated is False
+    OUTPUT_MODELS["retrieve_associated_diseases"].model_validate(result.payload)
+
+
+def test_associated_diseases_report_truncation(monkeypatch):
+    found = {KRAS["id"]: _target_diseases(KRAS, [(PDAC["id"], PDAC["name"], 0.9)], total=500)}
+    result = _run_associated(monkeypatch, _targets_board(KRAS), found=found)
+    assert result.truncated is True
+    assert (result.total_count, result.fetched_count) == (500, 1)
+
+
+def test_one_failing_target_gives_a_partial_error(monkeypatch):
+    result = _run_associated(
+        monkeypatch, _targets_board(KRAS, TP53), failing={TP53["id"]}
+    )
+    assert result.status == "partial_error"
+    assert TP53["id"] in result.payload["failed_targets"]
+    assert len(result.payload["pairs"]) == 2
+
+
+def test_all_targets_failing_is_an_error(monkeypatch):
+    result = _run_associated(monkeypatch, _targets_board(KRAS), failing={KRAS["id"]})
+    assert result.status == "error" and "timeout" in result.error
+
+
+def test_associated_diseases_need_a_resolved_target(monkeypatch):
+    result = _run_associated(monkeypatch, {})
+    assert result.status == "error" and "resolved target" in result.error
+
+
+def test_associated_diseases_refuse_a_bad_top_n(monkeypatch):
+    result = _run_associated(monkeypatch, _targets_board(KRAS), filters={"top_n": 0})
+    assert result.status == "error" and "top_n" in result.error
+
+
+def test_associated_diseases_feed_rank_diseases(monkeypatch):
+    got = _run_associated(monkeypatch, _targets_board(KRAS))
+    ranked = ADAPTERS["rank_diseases"].run(
+        _ctx(
+            "rank_diseases",
+            board={"disease_target_association": got.payload},
+            ranking=_DISEASE_RANKING,
+        )
+    )
+    assert ranked.status == "success"
+    assert [d["disease_id"] for d in ranked.payload["diseases"]] == [PDAC["id"], CRC["id"]]

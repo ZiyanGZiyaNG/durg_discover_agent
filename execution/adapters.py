@@ -15,6 +15,7 @@ from execution.more_adapters import (
     RetrieveDatasourceScoresAdapter,
     RetrieveExactPairsAdapter,
     RetrieveMechanismsAdapter,
+    RetrieveAssociatedDiseasesAdapter,
 )
 from query_opentargets import (
     OpenTargetsError,
@@ -709,4 +710,5 @@ ADAPTERS: dict[str, Adapter] = {
     "retrieve_mechanisms_and_modalities": RetrieveMechanismsAdapter(with_modality=True),
     "retrieve_clinical_stage": RetrieveClinicalStageAdapter(),
     "rank_diseases": RankDiseasesAdapter(),
+    "retrieve_associated_diseases": RetrieveAssociatedDiseasesAdapter(),
 }

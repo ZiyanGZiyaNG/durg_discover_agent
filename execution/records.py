@@ -313,6 +313,20 @@ class RankedDiseases(_Record):
     limitations: list[str]
 
 
+class AssociatedDiseaseRow(_Record):
+    disease_id: str
+    disease_name: str = ""
+    target_id: str
+    rank: int | None = None
+    overall_association_score: float | None = None
+
+
+class TargetAssociatedDiseases(_Record):
+    pairs: list[AssociatedDiseaseRow]
+    by_target: dict[str, dict[str, Any]]
+    failed_targets: dict[str, str]
+    limitations: list[str] = []
+
 # operation -> the model its payload must satisfy (same keys as ADAPTERS)
 OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "resolve_disease": ResolvedEntities,
@@ -345,4 +359,5 @@ OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "retrieve_mechanisms_and_modalities": DrugModalities,
     "retrieve_clinical_stage": ClinicalStageEvidence,
     "rank_diseases": RankedDiseases,
+    "retrieve_associated_diseases": TargetAssociatedDiseases,
 }
