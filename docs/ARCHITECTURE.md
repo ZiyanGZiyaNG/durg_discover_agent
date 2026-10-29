@@ -32,7 +32,7 @@ The Natural-language Planner has no retrieval tools. It creates a plan and Pytho
 | Europe PMC adapter | — | Not production-ready |
 | ClinicalTrials.gov adapter | — | Not production-ready |
 | Validation/review | `expert_review.py`, `evidence_pipeline.py` | Partial |
-| V2 execution compiler | — | Not implemented |
+| V2 execution compiler | 2026-10-29 | Partial: pre-execution checks, compile/dry-run and execution trace done; adapters 16/64 |
 | Stage 1 handoff | schemas in progress | Not finalized |
 
 ## Execution policy

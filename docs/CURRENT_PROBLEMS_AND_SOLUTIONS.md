@@ -1,12 +1,12 @@
 # Current Problems and Recommended Solutions
 
-## 1. Natural-language plans are not yet automatically executable
+## 1. Natural-language plans are only partly executable
 
-**Current state:** Query Manifest V2 planning and validation are mature, but there is no complete compiler from approved operations to retrieval tool calls.
+**Current state:** An execution compiler now exists (`execution/`). Approved plans are checked before any retrieval (operation approved, adapter exists, filter/ranking fields exist, required data is provided by an earlier step), compiled to an ordered tool-call list (`python -m execution PLAN.json --dry-run`), and run with typed output. Entity resolution and step-to-step data flow work. Adapters cover 16 of 64 operations; 3 of 18 acceptance cases are fully executable. The Planner does not yet emit `inputs` references.
 
-**Solution:** Implement an execution compiler that reads the authoritative operation table and maps each approved operation to an adapter, validated input, bounded execution policy, and typed output.
+**Solution:** Add adapters for the remaining operations by capability (generic, not drug- or disease-specific), and update Planner examples to emit `inputs`.
 
-**Done when:** A validated plan can execute against mocked adapters, records an execution trace, and refuses unknown operations without starting retrieval.
+**Done when:** Every acceptance case compiles to tool calls or is refused with a clear reason, and the adapter set covers the operations the Planner actually proposes.
 
 ## 2. Source support is uneven
 

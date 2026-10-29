@@ -882,3 +882,23 @@ Four regression tests cover direction resolution, reduced context, adaptive
 retry feedback, and repeated-failure termination. The complete suite now passes
 150 tests in 1.73 seconds, with only the existing harmless pytest cache warning.
 The revised dependency prompt has not yet been tested with the real model.
+
+
+
+
+## Execution compiler: representative plans compile and run (2026-10-29)
+
+`compile_plan` turns an approved Query Manifest into an ordered list of tool
+calls without running anything, and `python -m execution PLAN.json --dry-run`
+prints that list. Plans are refused before retrieval when an operation has no
+adapter, a filter or ranking field is not produced upstream, or a step needs data
+that no earlier step provides. Three representative plans compile in tests
+(known targets, target filtering, drug targets with approved-indication check).
+A live run of `phase2_pdac_known_targets_batched_v4.json` completed all six
+steps in 19.2 seconds and produced a ten-target ranking.
+
+Coverage is partial: adapters exist for 16 of 64 operations, and 3 of 18
+acceptance cases are fully executable. The Planner does not yet emit `inputs`
+references. The full suite passes 217 tests; 3 earlier failures are unrelated
+(Ollama cleanup and target-discovery filenames). The target-translation layer
+rule is still provisional and awaits research-team approval.
