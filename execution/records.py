@@ -404,6 +404,70 @@ class RankedOpportunities(_Record):
     ranking_spec: dict[str, Any]
     limitations: list[str]
 
+
+class DatatypeEntry(_Record):
+    datatype_id: str
+    datatype_score: float | None
+    datasources: list[dict[str, Any]]
+
+
+class EvidencePair(_Record):
+    disease_id: str
+    target_id: str
+    datatypes: list[DatatypeEntry]
+
+
+class PairEvidenceByType(_Record):
+    pairs: list[EvidencePair]
+    evidence_type_filter: list[str] | None
+    limitations: list[str]
+
+
+class RankedEvidenceType(_Record):
+    datatype_id: str
+    ranked_position: int
+    datatype_score: float | None
+
+
+class EvidenceTypePair(_Record):
+    disease_id: str
+    target_id: str
+    evidence_types: list[RankedEvidenceType]
+    top_evidence_type: str | None
+    top_is_tied: bool
+
+
+class EvidenceTypeComparison(_Record):
+    pairs: list[EvidenceTypePair]
+    ranking_spec: dict[str, Any] | None
+    limitations: list[str]
+
+
+class NormalizedRow(_Record):
+    disease_id: str
+    target_id: str
+    scores: dict[str, float | None]
+
+
+class NormalizedComparison(_Record):
+    dimensions: list[str]
+    rows: list[NormalizedRow]
+    limitations: list[str]
+
+
+class DatatypeComparison(_Record):
+    datatype_id: str
+    scores: dict[str, float | None]
+    leader_target_id: str | None
+    complete: bool
+    missing_target_ids: list[str]
+
+
+class TargetComparison(_Record):
+    disease_id: str
+    comparisons: list[DatatypeComparison]
+    limitations: list[str]
+
 # operation -> the model its payload must satisfy (same keys as ADAPTERS)
 OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "resolve_disease": ResolvedEntities,
@@ -443,4 +507,9 @@ OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "retrieve_genetic_and_somatic_evidence": GeneticSomaticEvidence,
     "filter_first_in_class_candidates": FirstInClassCandidates,
     "rank_opportunities": RankedOpportunities,
+    "retrieve_datasource_evidence": PairEvidenceByType,
+    "retrieve_evidence_by_type": PairEvidenceByType,
+    "compare_evidence_types": EvidenceTypeComparison,
+    "normalize_comparison_dimensions": NormalizedComparison,
+    "compare_targets": TargetComparison,
 }

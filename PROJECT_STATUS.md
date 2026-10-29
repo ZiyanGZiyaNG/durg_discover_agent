@@ -897,14 +897,22 @@ that no earlier step provides. Three representative plans compile in tests
 A live run of `phase2_pdac_known_targets_batched_v4.json` completed all six
 steps in 19.2 seconds and produced a ten-target ranking.
 
-Coverage is partial: adapters exist for 37 of 64 operations, and 9 of 18
-acceptance cases have every required operation implemented. Of the remaining 27
-operations, 16 need only Open Targets data (variant resolution, cross-indication
-drugs and cancers, datasource and evidence-type comparison, safety and
+Coverage is partial: adapters exist for 42 of 64 operations, and 11 of 18
+acceptance cases have every required operation implemented. Of the remaining 22
+operations, 11 need only Open Targets data (variant resolution, cross-indication
+drugs and cancers, safety and
 normal-tissue expression, kinase classification and coverage rates). The other
 11 depend on trial or publication data (ClinicalTrials.gov, Europe PMC), which
 has no query module yet.
-Added since the last update: `retrieve_associated_diseases`, `rank_diseases`,
+Added since the last update: `retrieve_associated_diseases`,
+Evidence-type comparison added: `retrieve_datasource_evidence`,
+`retrieve_evidence_by_type`, `compare_evidence_types`,
+`normalize_comparison_dimensions` and `compare_targets`. "Evidence type" is the
+Open Targets datatype; datasources are grouped under it using the
+`associationDatasources` metadata. Raw evidence records are not downloaded in
+these steps, and `compare_targets` names a leader only when every target has a
+score for that type (missing is never zero, ties have no leader). 
+`rank_diseases`,
 `compare_disease_rank` (generic replacement for the PDAC-specific
 `compare_pdac_rank`), `retrieve_genetic_evidence`,
 `retrieve_genetic_and_somatic_evidence`, `filter_supported_without_clinical_drug`,

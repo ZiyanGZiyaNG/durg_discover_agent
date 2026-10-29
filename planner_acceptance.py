@@ -308,6 +308,11 @@ _OPERATION_CONTRACTS: dict[str, dict] = {
     "retrieve_genetic_and_somatic_evidence": {"requires_any": ["target_candidates", "disease_target_association"], "provides": ["genetic_somatic_evidence"]},
     "filter_first_in_class_candidates": {"requires_all": ["genetic_somatic_evidence", "target_drug_evidence"], "provides": ["first_in_class_candidates"]},
     "rank_opportunities": {"requires_all": ["first_in_class_candidates"], "provides": ["opportunity_ranking"]},
+    "retrieve_datasource_evidence": {"requires_all": ["disease_target_association"], "provides": ["datasource_evidence"]},
+    "retrieve_evidence_by_type": {"requires_all": ["disease_target_association"], "provides": ["evidence_by_type"]},
+    "compare_evidence_types": {"requires_any": ["datasource_evidence", "evidence_by_type"], "provides": ["evidence_type_comparison"]},
+    "normalize_comparison_dimensions": {"requires_any": ["evidence_by_type", "datasource_evidence"], "provides": ["normalized_comparison"]},
+    "compare_targets": {"requires_all": ["normalized_comparison"], "provides": ["target_comparison"]},
 }
 
 

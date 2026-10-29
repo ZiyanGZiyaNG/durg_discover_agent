@@ -29,6 +29,7 @@ from query_opentargets import (
     resolve_mention,
     get_target_associated_diseases,
     get_disease_targets_datatype_scores,
+    get_association_datasource_types,
 )
 from datetime import datetime, timezone
 
@@ -1180,5 +1181,350 @@ class RankOpportunitiesAdapter:
             provides=["opportunity_ranking"],
             total_count=len(ranked),
             fetched_count=len(ranked),
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+
+def _datatype_key(value: Any) -> str:
+    return str(value).strip().lower().replace(" ", "_")
+
+
+def _evidence_types_from_filters(filters: dict[str, Any]) -> set[str] | None:
+    """The datatype ids a plan asks for, or None when it names none."""
+    if "evidence_type" not in filters:
+        return None
+    condition = filters["evidence_type"]
+    if isinstance(condition, dict):
+        if set(condition) - {"in", "eq"}:
+            raise ValueError("evidence_type filter supports only 'in' and 'eq'")
+        condition = condition.get("in", condition.get("eq"))
+    if condition is None:
+        raise ValueError("evidence_type filter has no value")
+    values = condition if isinstance(condition, list) else [condition]
+    return {_datatype_key(value) for value in values}
+
+
+class _PairEvidenceByTypeAdapter:
+    """Datasource scores of disease-target pairs, grouped by evidence datatype."""
+
+    source = "open_targets"
+    capability = ""
+    needs_type_filter = False
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        pair_rows = association_rows(ctx.board)
+        if not pair_rows:
+            return error_result(
+                ctx,
+                self.source,
+                start,
+                f"{ctx.operation} needs disease_target_association data from an earlier step",
+            )
+        unsupported = sorted(set(ctx.filters) - {"evidence_type"})
+        if unsupported:
+            return error_result(
+                ctx, self.source, start, f"unsupported filter(s): {unsupported}"
+            )
+        try:
+            wanted = _evidence_types_from_filters(ctx.filters)
+        except ValueError as exc:
+            return error_result(ctx, self.source, start, str(exc))
+        if self.needs_type_filter and not wanted:
+            return error_result(
+                ctx, self.source, start, f"{ctx.operation} needs an evidence_type filter"
+            )
+        try:
+            types_by_datasource = {
+                datasource: _datatype_key(datatype)
+                for datasource, datatype in get_association_datasource_types().items()
+            }
+            targets_by_disease: dict[str, set[str]] = {}
+            for row in pair_rows:
+                targets_by_disease.setdefault(row["disease_id"], set()).add(row["target_id"])
+            datatype_scores = {
+                disease_id: get_disease_targets_datatype_scores(
+                    disease_id, sorted(target_ids)
+                )["by_target"]
+                for disease_id, target_ids in targets_by_disease.items()
+            }
+        except OpenTargetsError as exc:
+            return error_result(ctx, self.source, start, str(exc))
+
+        pairs = []
+        unknown_datasources: set[str] = set()
+        for row in pair_rows:
+            record = datatype_scores[row["disease_id"]].get(row["target_id"]) or {}
+            scores = {
+                _datatype_key(item["datatype_id"]): item["score"]
+                for item in record.get("datatype_scores") or []
+            }
+            grouped: dict[str, list[dict]] = {}
+            for item in row.get("datasource_scores") or []:
+                datatype = types_by_datasource.get(item["datasource_id"])
+                if datatype is None:
+                    datatype = "unknown"
+                    unknown_datasources.add(item["datasource_id"])
+                grouped.setdefault(datatype, []).append(
+                    {"datasource_id": item["datasource_id"], "score": item.get("score")}
+                )
+            names = sorted(wanted) if wanted else sorted(set(scores) | set(grouped))
+            pairs.append(
+                {
+                    "disease_id": row["disease_id"],
+                    "disease_name": row.get("disease_name"),
+                    "target_id": row["target_id"],
+                    "target_symbol": row.get("target_symbol"),
+                    "overall_association_score": row.get("overall_association_score"),
+                    "datatypes": [
+                        {
+                            "datatype_id": name,
+                            "datatype_score": scores.get(name),
+                            "datasources": grouped.get(name, []),
+                        }
+                        for name in names
+                    ],
+                }
+            )
+        limitations = [
+            "Scores are Open Targets association scores per datatype and datasource; "
+            "they are not probabilities, and evidence record counts are not scores.",
+            "Raw evidence records are not downloaded in this step; only the "
+            "clinical_precedence records fetched by the exact-pair step exist.",
+            "A datatype with no score is missing in this source, not zero.",
+        ]
+        if unknown_datasources:
+            limitations.append(
+                "Datasources with no datatype in the metadata are grouped as "
+                f"'unknown': {sorted(unknown_datasources)}."
+            )
+        has_score = any(
+            entry["datatype_score"] is not None
+            for pair in pairs
+            for entry in pair["datatypes"]
+        )
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status="success" if has_score else "no_records",
+            source=self.source,
+            payload={
+                "pairs": pairs,
+                "evidence_type_filter": sorted(wanted) if wanted else None,
+                "limitations": limitations,
+            },
+            provides=[self.capability],
+            total_count=len(pairs),
+            fetched_count=len(pairs),
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+
+class RetrieveDatasourceEvidenceAdapter(_PairEvidenceByTypeAdapter):
+    capability = "datasource_evidence"
+
+
+class RetrieveEvidenceByTypeAdapter(_PairEvidenceByTypeAdapter):
+    capability = "evidence_by_type"
+    needs_type_filter = True
+
+
+def _typed_evidence(ctx: StepContext) -> dict[str, Any] | None:
+    data = ctx.board.get("evidence_by_type") or ctx.board.get("datasource_evidence")
+    return data if data and data.get("pairs") else None
+
+
+class CompareEvidenceTypesAdapter:
+    """Rank the evidence types of each pair by their own datatype score."""
+
+    source = "local_analysis"
+    _METRICS = {"datatype_score", "datasource_contribution", "score"}
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        data = _typed_evidence(ctx)
+        if data is None:
+            return error_result(
+                ctx,
+                self.source,
+                start,
+                "compare_evidence_types needs datasource_evidence or evidence_by_type",
+            )
+        direction = "descending"
+        if ctx.ranking is not None:
+            if ctx.ranking["primary_metric"] not in self._METRICS:
+                return error_result(
+                    ctx,
+                    self.source,
+                    start,
+                    "compare_evidence_types ranks by datatype_score only, "
+                    f"not {ctx.ranking['primary_metric']!r}",
+                )
+            direction = ctx.ranking["direction"]
+        results = []
+        for pair in data["pairs"]:
+            rows = [
+                {
+                    "datatype_id": entry["datatype_id"],
+                    "datatype_score": entry["datatype_score"],
+                    "datasource_count": len(entry["datasources"]),
+                }
+                for entry in pair["datatypes"]
+            ]
+            ranked = rank_rows(rows, "datatype_score", direction) if rows else []
+            scored = [row for row in ranked if row["datatype_score"] is not None]
+            results.append(
+                {
+                    "disease_id": pair["disease_id"],
+                    "target_id": pair["target_id"],
+                    "target_symbol": pair.get("target_symbol"),
+                    "evidence_types": ranked,
+                    "top_evidence_type": scored[0]["datatype_id"] if scored else None,
+                    "top_is_tied": len(scored) > 1
+                    and scored[0]["datatype_score"] == scored[1]["datatype_score"],
+                }
+            )
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status="success",
+            source=self.source,
+            payload={
+                "pairs": results,
+                "ranking_spec": ctx.ranking,
+                "limitations": [
+                    "Datatype scores are not shares that add up to a whole; the top "
+                    "type has the strongest score, not a percentage of the evidence.",
+                    "An evidence type with no score is missing, not zero.",
+                ],
+            },
+            provides=["evidence_type_comparison"],
+            total_count=len(results),
+            fetched_count=len(results),
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+
+class NormalizeComparisonDimensionsAdapter:
+    """Put every target on the same evidence-type dimensions; gaps stay null."""
+
+    source = "local_analysis"
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        data = _typed_evidence(ctx)
+        if data is None:
+            return error_result(
+                ctx,
+                self.source,
+                start,
+                "normalize_comparison_dimensions needs evidence_by_type or datasource_evidence",
+            )
+        dimensions = sorted(
+            {entry["datatype_id"] for pair in data["pairs"] for entry in pair["datatypes"]}
+        )
+        rows = []
+        for pair in data["pairs"]:
+            by_type = {entry["datatype_id"]: entry["datatype_score"] for entry in pair["datatypes"]}
+            rows.append(
+                {
+                    "disease_id": pair["disease_id"],
+                    "target_id": pair["target_id"],
+                    "target_symbol": pair.get("target_symbol"),
+                    "scores": {name: by_type.get(name) for name in dimensions},
+                }
+            )
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status="success" if rows else "no_records",
+            source=self.source,
+            payload={
+                "dimensions": dimensions,
+                "rows": rows,
+                "limitations": [
+                    "All scores are on the same 0-1 Open Targets scale, so no "
+                    "denominator is applied.",
+                    "A missing score stays null; it is never turned into zero.",
+                ],
+            },
+            provides=["normalized_comparison"],
+            total_count=len(rows),
+            fetched_count=len(rows),
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+
+class CompareTargetsAdapter:
+    """Side-by-side scores per evidence type; no combined score, no winner overall."""
+
+    source = "local_analysis"
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        data = ctx.board.get("normalized_comparison")
+        if not data or not data.get("rows"):
+            return error_result(
+                ctx, self.source, start, "compare_targets needs normalized_comparison"
+            )
+        rows = data["rows"]
+        disease_ids = {row["disease_id"] for row in rows}
+        if len(disease_ids) != 1:
+            return error_result(
+                ctx,
+                self.source,
+                start,
+                "compare_targets compares targets inside one disease, "
+                f"got {sorted(str(d) for d in disease_ids)}",
+            )
+        if len({row["target_id"] for row in rows}) < 2:
+            return error_result(
+                ctx, self.source, start, "compare_targets needs at least two targets"
+            )
+        comparisons = []
+        for name in data["dimensions"]:
+            scores = {row["target_id"]: row["scores"].get(name) for row in rows}
+            missing = [target_id for target_id, score in scores.items() if score is None]
+            complete = not missing
+            leader = None
+            tied = False
+            if complete:
+                top = max(scores.values())
+                leaders = [target_id for target_id, score in scores.items() if score == top]
+                tied = len(leaders) > 1
+                leader = None if tied else leaders[0]
+            comparisons.append(
+                {
+                    "datatype_id": name,
+                    "scores": scores,
+                    "leader_target_id": leader,
+                    "tied": tied,
+                    "complete": complete,
+                    "missing_target_ids": missing,
+                }
+            )
+        has_score = any(
+            score is not None for item in comparisons for score in item["scores"].values()
+        )
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status="success" if has_score else "no_records",
+            source=self.source,
+            payload={
+                "disease_id": next(iter(disease_ids)),
+                "target_symbols": {row["target_id"]: row.get("target_symbol") for row in rows},
+                "comparisons": comparisons,
+                "limitations": [
+                    "Scores are Open Targets datatype scores on one 0-1 scale; no "
+                    "combined score is computed and no overall winner is named.",
+                    "A leader is named only when every compared target has a score "
+                    "for that evidence type; a missing score is not zero.",
+                    "Equal scores are reported as tied, with no leader.",
+                ],
+            },
+            provides=["target_comparison"],
+            total_count=len(comparisons),
+            fetched_count=len(comparisons),
             elapsed_seconds=time.monotonic() - start,
         )

@@ -854,6 +854,23 @@ def get_disease_targets_datatype_scores(
     }
 
 
+ASSOCIATION_DATASOURCES_QUERY = """
+query AssociationDatasources {
+  associationDatasources { datasource datatype }
+}
+"""
+
+
+def get_association_datasource_types() -> dict[str, str]:
+    """Datasource id -> evidence datatype id, from Open Targets metadata."""
+    data = _graphql(ASSOCIATION_DATASOURCES_QUERY, {})
+    return {
+        item["datasource"]: item["datatype"]
+        for item in (data.get("associationDatasources") or [])
+    }
+
+
+
 
 def get_drug_indications_by_id(chembl_id: str) -> dict[str, Any]:
     data = _graphql(DRUG_INDICATIONS_QUERY, {"chemblId": chembl_id})

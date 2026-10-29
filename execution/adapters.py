@@ -21,6 +21,11 @@ from execution.more_adapters import (
     FilterFirstInClassCandidatesAdapter,
     RankOpportunitiesAdapter,
     RetrieveGeneticAndSomaticEvidenceAdapter,
+    RetrieveDatasourceEvidenceAdapter,
+    RetrieveEvidenceByTypeAdapter,
+    CompareEvidenceTypesAdapter,
+    NormalizeComparisonDimensionsAdapter,
+    CompareTargetsAdapter,
 )
 from query_opentargets import (
     OpenTargetsError,
@@ -792,4 +797,9 @@ ADAPTERS: dict[str, Adapter] = {
     "retrieve_genetic_and_somatic_evidence": RetrieveGeneticAndSomaticEvidenceAdapter(),
     "filter_first_in_class_candidates": FilterFirstInClassCandidatesAdapter(),
     "rank_opportunities": RankOpportunitiesAdapter(),
+    "retrieve_datasource_evidence": RetrieveDatasourceEvidenceAdapter(),
+    "retrieve_evidence_by_type": RetrieveEvidenceByTypeAdapter(),
+    "compare_evidence_types": CompareEvidenceTypesAdapter(),
+    "normalize_comparison_dimensions": NormalizeComparisonDimensionsAdapter(),
+    "compare_targets": CompareTargetsAdapter(),
 }

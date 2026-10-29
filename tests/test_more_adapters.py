@@ -1392,3 +1392,224 @@ def test_opportunity_ranking_refuses_a_text_metric():
         )
     )
     assert result.status == "error" and "not numeric" in result.error
+def _evidence_board():
+    def pair(target, score, datasources):
+        return {
+            "disease_id": PDAC["id"],
+            "disease_name": PDAC["name"],
+            "target_id": target["id"],
+            "target_symbol": target["symbol"],
+            "overall_association_score": score,
+            "datasource_scores": [{"datasource_id": d, "score": s} for d, s in datasources],
+        }
+
+    return {
+        "disease_target_association": {
+            "pairs": [
+                pair(KRAS, 0.8, [("cancer_gene_census", 0.9), ("europepmc", 0.4)]),
+                pair(TP53, 0.5, [("europepmc", 0.4), ("mystery_source", 0.1)]),
+            ]
+        }
+    }
+
+
+def _stub_datatypes(monkeypatch):
+    monkeypatch.setattr(
+        more,
+        "get_association_datasource_types",
+        lambda: {"cancer_gene_census": "somatic_mutation", "europepmc": "literature"},
+    )
+    monkeypatch.setattr(
+        more,
+        "get_disease_targets_datatype_scores",
+        lambda disease_id, target_ids: {
+            "by_target": {
+                KRAS["id"]: {
+                    "datatype_scores": [
+                        {"datatype_id": "somatic_mutation", "score": 0.9},
+                        {"datatype_id": "literature", "score": 0.4},
+                    ]
+                },
+                TP53["id"]: {"datatype_scores": [{"datatype_id": "literature", "score": 0.4}]},
+            }
+        },
+    )
+
+
+def test_datasource_evidence_groups_datasources_by_datatype(monkeypatch):
+    _stub_datatypes(monkeypatch)
+    result = ADAPTERS["retrieve_datasource_evidence"].run(
+        _ctx("retrieve_datasource_evidence", board=_evidence_board())
+    )
+    assert result.status == "success"
+    assert result.provides == ["datasource_evidence"]
+    kras, tp53 = result.payload["pairs"]
+    by_type = {e["datatype_id"]: e for e in kras["datatypes"]}
+    assert by_type["somatic_mutation"]["datatype_score"] == 0.9
+    assert by_type["somatic_mutation"]["datasources"] == [
+        {"datasource_id": "cancer_gene_census", "score": 0.9}
+    ]
+    tp53_types = {e["datatype_id"]: e for e in tp53["datatypes"]}
+    assert tp53_types["unknown"]["datatype_score"] is None
+    assert any("mystery_source" in text for text in result.payload["limitations"])
+    OUTPUT_MODELS["retrieve_datasource_evidence"].model_validate(result.payload)
+
+
+def test_evidence_type_filter_keeps_only_requested_types_and_missing_is_null(monkeypatch):
+    _stub_datatypes(monkeypatch)
+    result = ADAPTERS["retrieve_evidence_by_type"].run(
+        _ctx(
+            "retrieve_evidence_by_type",
+            board=_evidence_board(),
+            filters={"evidence_type": {"in": ["somatic_mutation", "Literature"]}},
+        )
+    )
+    assert result.payload["evidence_type_filter"] == ["literature", "somatic_mutation"]
+    tp53 = result.payload["pairs"][1]
+    scores = {e["datatype_id"]: e["datatype_score"] for e in tp53["datatypes"]}
+    assert scores == {"literature": 0.4, "somatic_mutation": None}
+    OUTPUT_MODELS["retrieve_evidence_by_type"].model_validate(result.payload)
+
+
+def test_evidence_by_type_needs_a_type_filter(monkeypatch):
+    _stub_datatypes(monkeypatch)
+    result = ADAPTERS["retrieve_evidence_by_type"].run(
+        _ctx("retrieve_evidence_by_type", board=_evidence_board())
+    )
+    assert result.status == "error" and "evidence_type" in result.error
+
+
+def test_datasource_evidence_refuses_unsupported_filters_and_missing_input(monkeypatch):
+    _stub_datatypes(monkeypatch)
+    bad_filter = ADAPTERS["retrieve_datasource_evidence"].run(
+        _ctx("retrieve_datasource_evidence", board=_evidence_board(), filters={"top_n": 3})
+    )
+    assert bad_filter.status == "error" and "unsupported" in bad_filter.error
+    no_pairs = ADAPTERS["retrieve_datasource_evidence"].run(
+        _ctx("retrieve_datasource_evidence", board={})
+    )
+    assert no_pairs.status == "error" and "disease_target_association" in no_pairs.error
+
+
+def test_datasource_evidence_reports_a_failed_lookup(monkeypatch):
+    def boom():
+        raise OpenTargetsError("metadata down")
+
+    monkeypatch.setattr(more, "get_association_datasource_types", boom)
+    result = ADAPTERS["retrieve_datasource_evidence"].run(
+        _ctx("retrieve_datasource_evidence", board=_evidence_board())
+    )
+    assert result.status == "error" and "metadata down" in result.error
+
+
+def _typed_board():
+    def entry(name, score):
+        return {"datatype_id": name, "datatype_score": score, "datasources": []}
+
+    return {
+        "evidence_by_type": {
+            "pairs": [
+                {
+                    "disease_id": PDAC["id"],
+                    "target_id": KRAS["id"],
+                    "target_symbol": "KRAS",
+                    "datatypes": [
+                        entry("literature", 0.4),
+                        entry("somatic_mutation", 0.9),
+                        entry("rna_expression", None),
+                    ],
+                },
+                {
+                    "disease_id": PDAC["id"],
+                    "target_id": TP53["id"],
+                    "target_symbol": "TP53",
+                    "datatypes": [
+                        entry("literature", 0.4),
+                        entry("somatic_mutation", 0.4),
+                        entry("clinical", 0.7),
+                    ],
+                },
+            ]
+        }
+    }
+
+
+_TYPE_RANKING = {
+    "primary_metric": "datasource_contribution",
+    "direction": "descending",
+    "secondary_metrics": [],
+}
+
+
+def test_evidence_types_are_ranked_per_pair_with_missing_last_and_ties_flagged():
+    result = ADAPTERS["compare_evidence_types"].run(
+        _ctx("compare_evidence_types", board=_typed_board(), ranking=_TYPE_RANKING)
+    )
+    kras, tp53 = result.payload["pairs"]
+    assert [e["datatype_id"] for e in kras["evidence_types"]] == [
+        "somatic_mutation", "literature", "rna_expression",
+    ]
+    assert kras["top_evidence_type"] == "somatic_mutation" and not kras["top_is_tied"]
+    assert tp53["top_evidence_type"] == "clinical"
+    assert tp53["evidence_types"][1]["datatype_score"] == tp53["evidence_types"][2]["datatype_score"]
+    OUTPUT_MODELS["compare_evidence_types"].model_validate(result.payload)
+
+
+def test_evidence_type_ranking_refuses_other_metrics_and_needs_input():
+    other = ADAPTERS["compare_evidence_types"].run(
+        _ctx(
+            "compare_evidence_types",
+            board=_typed_board(),
+            ranking={"primary_metric": "overall_association_score", "direction": "descending", "secondary_metrics": []},
+        )
+    )
+    assert other.status == "error" and "datatype_score" in other.error
+    empty = ADAPTERS["compare_evidence_types"].run(_ctx("compare_evidence_types", board={}))
+    assert empty.status == "error"
+
+
+def test_normalized_dimensions_are_shared_and_gaps_stay_null():
+    result = ADAPTERS["normalize_comparison_dimensions"].run(
+        _ctx("normalize_comparison_dimensions", board=_typed_board())
+    )
+    assert result.payload["dimensions"] == ["clinical", "literature", "rna_expression", "somatic_mutation"]
+    kras, tp53 = result.payload["rows"]
+    assert kras["scores"]["clinical"] is None and tp53["scores"]["rna_expression"] is None
+    assert kras["scores"]["somatic_mutation"] == 0.9
+    OUTPUT_MODELS["normalize_comparison_dimensions"].model_validate(result.payload)
+
+
+def test_compare_targets_names_a_leader_only_when_every_target_has_a_score():
+    normalized = ADAPTERS["normalize_comparison_dimensions"].run(
+        _ctx("normalize_comparison_dimensions", board=_typed_board())
+    )
+    result = ADAPTERS["compare_targets"].run(
+        _ctx("compare_targets", board={"normalized_comparison": normalized.payload})
+    )
+    assert result.status == "success"
+    by_type = {c["datatype_id"]: c for c in result.payload["comparisons"]}
+    assert by_type["somatic_mutation"]["leader_target_id"] == KRAS["id"]
+    assert by_type["somatic_mutation"]["complete"] is True
+    assert by_type["literature"]["leader_target_id"] is None and by_type["literature"]["tied"]
+    assert by_type["clinical"]["leader_target_id"] is None
+    assert by_type["clinical"]["missing_target_ids"] == [KRAS["id"]]
+    OUTPUT_MODELS["compare_targets"].model_validate(result.payload)
+
+
+def test_compare_targets_needs_two_targets_in_one_disease():
+    def board(rows):
+        return {"normalized_comparison": {"dimensions": ["literature"], "rows": rows}}
+
+    def row(disease, target):
+        return {"disease_id": disease, "target_id": target, "scores": {"literature": 0.5}}
+
+    one_target = ADAPTERS["compare_targets"].run(
+        _ctx("compare_targets", board=board([row("D1", "T1")]))
+    )
+    assert one_target.status == "error" and "two targets" in one_target.error
+    two_diseases = ADAPTERS["compare_targets"].run(
+        _ctx("compare_targets", board=board([row("D1", "T1"), row("D2", "T2")]))
+    )
+    assert two_diseases.status == "error" and "one disease" in two_diseases.error
+    nothing = ADAPTERS["compare_targets"].run(_ctx("compare_targets", board={}))
+    assert nothing.status == "error"
