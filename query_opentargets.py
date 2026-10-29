@@ -69,6 +69,25 @@ query DiseaseTargetPair($efoId: String!, $ensemblId: String!) {
 }
 """
 
+
+DISEASE_TARGETS_DATATYPE_QUERY = """
+query DiseaseTargetsDatatype($efoId: String!, $targetIds: [String!]!, $pageSize: Int!) {
+  disease(efoId: $efoId) {
+    id
+    name
+    associatedTargets(Bs: $targetIds, page: {index: 0, size: $pageSize}) {
+      count
+      rows {
+        target { id approvedSymbol approvedName }
+        score
+        datatypeScores { id score }
+      }
+    }
+  }
+}
+"""
+
+
 KNOWN_DRUGS_QUERY = """
 query KnownDrugs($ensemblId: String!) {
   target(ensemblId: $ensemblId) {
@@ -797,6 +816,41 @@ def get_target_associated_diseases(ensembl_id: str, top_n: int = 10) -> dict[str
         "returned_disease_count": len(diseases),
         "total_associated_disease_count": int(association.get("count") or len(diseases)),
         "diseases": diseases,
+    }
+
+
+def get_disease_targets_datatype_scores(
+    efo_id: str, target_ids: list[str]
+) -> dict[str, Any]:
+    """Datatype-level association scores of the given targets for one disease."""
+    if not target_ids:
+        raise ValueError("target_ids must not be empty")
+    data = _graphql(
+        DISEASE_TARGETS_DATATYPE_QUERY,
+        {"efoId": efo_id, "targetIds": target_ids, "pageSize": len(target_ids)},
+    )
+    disease = data.get("disease")
+    if not disease:
+        raise OpenTargetsError(f"Disease record unavailable: {efo_id}")
+    association = disease.get("associatedTargets") or {}
+    by_target: dict[str, dict[str, Any]] = {}
+    for row in association.get("rows") or []:
+        target = row.get("target") or {}
+        by_target[target.get("id") or ""] = {
+            "target_id": target.get("id") or "",
+            "target_symbol": target.get("approvedSymbol") or "",
+            "overall_association_score": row.get("score"),
+            "datatype_scores": [
+                {"datatype_id": item["id"], "score": item["score"]}
+                for item in (row.get("datatypeScores") or [])
+            ],
+        }
+    return {
+        "disease_id": disease["id"],
+        "disease_name": disease.get("name") or "",
+        "requested_target_count": len(target_ids),
+        "returned_target_count": len(by_target),
+        "by_target": by_target,
     }
 
 

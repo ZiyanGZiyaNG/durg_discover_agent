@@ -337,6 +337,34 @@ class DiseaseRankComparison(_Record):
     is_top: bool
     limitations: list[str]
 
+
+
+class GeneticEvidenceRow(_Record):
+    target_id: str
+    genetic_evidence_score: float | None
+
+
+class GeneticEvidence(_Record):
+    disease_id: str
+    datatype_id: str
+    targets: list[GeneticEvidenceRow]
+    limitations: list[str]
+
+
+class SupportedWithoutDrugRow(_Record):
+    target_id: str
+    genetic_evidence_score: float
+    drug_record_count: int
+
+
+class SupportedWithoutClinicalDrug(_Record):
+    targets: list[SupportedWithoutDrugRow]
+    excluded_target_ids: list[str]
+    unevaluable_target_ids: list[str]
+    filter_spec: dict[str, Any]
+    evaluated_on: str
+    limitations: list[str]
+
 # operation -> the model its payload must satisfy (same keys as ADAPTERS)
 OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "resolve_disease": ResolvedEntities,
@@ -371,4 +399,6 @@ OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "rank_diseases": RankedDiseases,
     "retrieve_associated_diseases": TargetAssociatedDiseases,
     "compare_disease_rank": DiseaseRankComparison,
+    "retrieve_genetic_evidence": GeneticEvidence,
+    "filter_supported_without_clinical_drug": SupportedWithoutClinicalDrug,
 }

@@ -16,6 +16,8 @@ from execution.more_adapters import (
     RetrieveExactPairsAdapter,
     RetrieveMechanismsAdapter,
     RetrieveAssociatedDiseasesAdapter,
+    FilterSupportedWithoutClinicalDrugAdapter,
+    RetrieveGeneticEvidenceAdapter,
 )
 from query_opentargets import (
     OpenTargetsError,
@@ -782,4 +784,6 @@ ADAPTERS: dict[str, Adapter] = {
     "rank_diseases": RankDiseasesAdapter(),
     "retrieve_associated_diseases": RetrieveAssociatedDiseasesAdapter(),
     "compare_disease_rank": CompareDiseaseRankAdapter(),
+    "retrieve_genetic_evidence": RetrieveGeneticEvidenceAdapter(),
+    "filter_supported_without_clinical_drug": FilterSupportedWithoutClinicalDrugAdapter(),
 }

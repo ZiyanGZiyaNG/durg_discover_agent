@@ -11,10 +11,11 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from execution.analysis import rank_rows
+from execution.analysis import rank_rows, filter_rows
 from execution.common import (
     _collect_per_target,
     _resolved_for_step,
+    _targets_for_step,
     association_rows,
     error_result,
 )
@@ -27,7 +28,9 @@ from query_opentargets import (
     resolve_entity,
     resolve_mention,
     get_target_associated_diseases,
+    get_disease_targets_datatype_scores,
 )
+from datetime import datetime, timezone
 
 
 def _pair_key(disease_id: str | None, target_id: str) -> str:
@@ -817,5 +820,167 @@ class RankDiseasesAdapter:
             provides=["disease_ranking"],
             total_count=len(ranked),
             fetched_count=len(ranked),
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+
+GENETIC_DATATYPE = "genetic_association"
+
+
+class RetrieveGeneticEvidenceAdapter:
+    """Genetic-association score of each candidate target for one disease."""
+
+    source = "open_targets"
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        diseases = _resolved_for_step(ctx, "disease", "resolved_disease")
+        if len(diseases) == 1:
+            disease_id = diseases[0]["id"]
+        else:
+            disease_id = (ctx.board.get("disease_target_association") or {}).get("disease_id")
+        if not disease_id:
+            return error_result(
+                ctx, self.source, start, "retrieve_genetic_evidence needs one resolved disease"
+            )
+        targets = _targets_for_step(ctx)
+        if not targets:
+            return error_result(
+                ctx,
+                self.source,
+                start,
+                "retrieve_genetic_evidence needs target candidates or resolved targets",
+            )
+        try:
+            found = get_disease_targets_datatype_scores(
+                disease_id, [target["id"] for target in targets]
+            )
+        except OpenTargetsError as exc:
+            return error_result(ctx, self.source, start, str(exc))
+        rows = []
+        for target in targets:
+            record = found["by_target"].get(target["id"])
+            score = None
+            if record:
+                score = next(
+                    (
+                        item["score"]
+                        for item in record["datatype_scores"]
+                        if item["datatype_id"] == GENETIC_DATATYPE
+                    ),
+                    None,
+                )
+            rows.append(
+                {
+                    "target_id": target["id"],
+                    "target_symbol": target.get("symbol", ""),
+                    "target_name": target.get("name", ""),
+                    "genetic_evidence_score": score,
+                }
+            )
+        with_score = sum(row["genetic_evidence_score"] is not None for row in rows)
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status="success" if with_score else "no_records",
+            source=self.source,
+            payload={
+                "disease_id": found["disease_id"],
+                "datatype_id": GENETIC_DATATYPE,
+                "targets": rows,
+                "limitations": [
+                    "The score is the Open Targets genetic_association datatype score "
+                    "for this disease; it is not a probability or evidence of efficacy.",
+                    "A target with no score has no genetic_association evidence listed "
+                    "in this source; the score is missing, not zero.",
+                    "Only the candidate targets from earlier steps were queried.",
+                ],
+            },
+            provides=["genetic_evidence"],
+            total_count=len(rows),
+            fetched_count=with_score,
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+
+class FilterSupportedWithoutClinicalDrugAdapter:
+    """Targets with genetic evidence and no drug record in the queried source."""
+
+    source = "local_analysis"
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        genetic = ctx.board.get("genetic_evidence") or {}
+        stage = ctx.board.get("clinical_stage_evidence") or {}
+        if not genetic.get("targets") or stage.get("by_target") is None:
+            return error_result(
+                ctx,
+                self.source,
+                start,
+                "filter_supported_without_clinical_drug needs genetic_evidence "
+                "and clinical_stage_evidence",
+            )
+        by_stage = stage["by_target"]
+        failed = stage.get("failed_targets") or {}
+        candidates: list[dict] = []
+        rejected: list[str] = []
+        unevaluable: list[str] = []
+        for row in genetic["targets"]:
+            record = by_stage.get(row["target_id"])
+            view = {
+                **row,
+                "drug_record_count": record["drug_record_count"] if record else None,
+                "stages_present": record["stages_present"] if record else None,
+            }
+            if view["genetic_evidence_score"] is None:
+                rejected.append(row["target_id"])
+            elif view["drug_record_count"] is None:
+                unevaluable.append(row["target_id"])
+            elif view["drug_record_count"] > 0:
+                rejected.append(row["target_id"])
+            else:
+                candidates.append(view)
+        kept_rows = candidates
+        if ctx.filters and candidates:
+            try:
+                kept_ids, extra_rejected, extra_unevaluable = filter_rows(
+                    candidates, ctx.filters
+                )
+            except ValueError as exc:
+                return error_result(ctx, self.source, start, str(exc))
+            kept_set = set(kept_ids)
+            kept_rows = [row for row in candidates if row["target_id"] in kept_set]
+            rejected += extra_rejected
+            unevaluable += extra_unevaluable
+        if failed:
+            status = "partial_error"
+        else:
+            status = "success" if kept_rows else "no_records"
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status=status,
+            source=self.source,
+            payload={
+                "targets": kept_rows,
+                "excluded_target_ids": rejected,
+                "unevaluable_target_ids": unevaluable,
+                "filter_spec": ctx.filters,
+                "evaluated_on": datetime.now(timezone.utc).date().isoformat(),
+                "limitations": [
+                    "No drug record means none was found in the Open Targets "
+                    "known-drug data on the evaluated_on date; it does not prove that "
+                    "no drug exists.",
+                    "Any drug record counts as a drug here; stages_present is "
+                    "listed on excluded rows' source data so the reader can judge stages.",
+                    "A target whose drug retrieval failed is unevaluable, not 'no drug'.",
+                    "Genetic evidence is an Open Targets association score, not a "
+                    "probability or evidence of efficacy.",
+                ],
+            },
+            provides=["supported_without_clinical_drug"],
+            total_count=len(genetic["targets"]),
+            fetched_count=len(kept_rows),
+            error="; ".join(f"{tid}: {msg}" for tid, msg in failed.items()) or None,
             elapsed_seconds=time.monotonic() - start,
         )

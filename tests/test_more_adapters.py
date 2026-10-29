@@ -1069,3 +1069,144 @@ def test_disease_rank_needs_exactly_one_disease():
         {**_ranked_diseases_board(), "resolved_disease": {"e1": PDAC, "e2": CRC}}
     )
     assert result.status == "error" and "one disease" in result.error
+
+
+# ---------- genetic evidence without a clinical drug ----------
+
+def _candidates_board():
+    return {
+        "resolved_disease": {"d": PDAC},
+        "target_candidates": {
+            "targets": [
+                {"target_id": tid, "target_symbol": tid, "target_name": tid}
+                for tid in ("T1", "T2", "T3")
+            ]
+        },
+    }
+
+
+def _fake_datatype_scores(monkeypatch, by_target):
+    monkeypatch.setattr(
+        more,
+        "get_disease_targets_datatype_scores",
+        lambda disease_id, target_ids: {
+            "disease_id": disease_id,
+            "disease_name": PDAC["name"],
+            "requested_target_count": len(target_ids),
+            "returned_target_count": len(by_target),
+            "by_target": by_target,
+        },
+    )
+
+
+def test_genetic_evidence_keeps_missing_scores_missing(monkeypatch):
+    _fake_datatype_scores(
+        monkeypatch,
+        {
+            "T1": {"datatype_scores": [
+                {"datatype_id": "genetic_association", "score": 0.7},
+                {"datatype_id": "literature", "score": 0.9},
+            ]},
+            "T2": {"datatype_scores": [{"datatype_id": "literature", "score": 0.5}]},
+        },
+    )
+    result = ADAPTERS["retrieve_genetic_evidence"].run(
+        _ctx("retrieve_genetic_evidence", board=_candidates_board())
+    )
+    scores = {r["target_id"]: r["genetic_evidence_score"] for r in result.payload["targets"]}
+    assert scores == {"T1": 0.7, "T2": None, "T3": None}
+    assert result.status == "success"
+    assert result.provides == ["genetic_evidence"]
+    OUTPUT_MODELS["retrieve_genetic_evidence"].model_validate(result.payload)
+
+
+def test_genetic_evidence_needs_one_disease():
+    board = _candidates_board()
+    del board["resolved_disease"]
+    result = ADAPTERS["retrieve_genetic_evidence"].run(
+        _ctx("retrieve_genetic_evidence", board=board)
+    )
+    assert result.status == "error" and "one resolved disease" in result.error
+
+
+def test_genetic_evidence_api_failure_is_an_error(monkeypatch):
+    def boom(disease_id, target_ids):
+        raise OpenTargetsError("timeout")
+
+    monkeypatch.setattr(more, "get_disease_targets_datatype_scores", boom)
+    result = ADAPTERS["retrieve_genetic_evidence"].run(
+        _ctx("retrieve_genetic_evidence", board=_candidates_board())
+    )
+    assert result.status == "error" and "timeout" in result.error
+
+
+def _genetic_and_stage_board():
+    def stage(count):
+        return {
+            "drug_record_count": count,
+            "stages_present": ["PHASE_2"] if count else [],
+            "drugs": [],
+        }
+
+    scores = [("T1", 0.7), ("T2", 0.4), ("T3", None), ("T4", 0.9), ("T5", 0.8)]
+    return {
+        "genetic_evidence": {
+            "disease_id": PDAC["id"],
+            "datatype_id": "genetic_association",
+            "targets": [
+                {
+                    "target_id": tid,
+                    "target_symbol": tid,
+                    "target_name": tid,
+                    "genetic_evidence_score": score,
+                }
+                for tid, score in scores
+            ],
+            "limitations": [],
+        },
+        "clinical_stage_evidence": {
+            "by_target": {"T1": stage(0), "T2": stage(2), "T3": stage(0), "T5": stage(0)},
+            "failed_targets": {"T4": "timeout"},
+        },
+    }
+
+
+def test_supported_without_drug_separates_none_from_unknown():
+    result = ADAPTERS["filter_supported_without_clinical_drug"].run(
+        _ctx("filter_supported_without_clinical_drug", board=_genetic_and_stage_board())
+    )
+    assert [t["target_id"] for t in result.payload["targets"]] == ["T1", "T5"]
+    assert sorted(result.payload["excluded_target_ids"]) == ["T2", "T3"]
+    assert result.payload["unevaluable_target_ids"] == ["T4"]
+    assert result.status == "partial_error"
+    OUTPUT_MODELS["filter_supported_without_clinical_drug"].model_validate(result.payload)
+
+
+def test_supported_without_drug_applies_an_extra_score_filter():
+    result = ADAPTERS["filter_supported_without_clinical_drug"].run(
+        _ctx(
+            "filter_supported_without_clinical_drug",
+            board=_genetic_and_stage_board(),
+            filters={"genetic_evidence_score": {"gte": 0.75}},
+        )
+    )
+    assert [t["target_id"] for t in result.payload["targets"]] == ["T5"]
+    assert "T1" in result.payload["excluded_target_ids"]
+
+
+def test_supported_without_drug_rejects_an_unknown_filter_field():
+    result = ADAPTERS["filter_supported_without_clinical_drug"].run(
+        _ctx(
+            "filter_supported_without_clinical_drug",
+            board=_genetic_and_stage_board(),
+            filters={"not_a_field": {"gte": 1}},
+        )
+    )
+    assert result.status == "error" and "not_a_field" in result.error
+
+
+def test_supported_without_drug_needs_both_inputs():
+    result = ADAPTERS["filter_supported_without_clinical_drug"].run(
+        _ctx("filter_supported_without_clinical_drug", board={})
+    )
+    assert result.status == "error" and "clinical_stage_evidence" in result.error

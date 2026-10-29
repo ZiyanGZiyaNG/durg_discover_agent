@@ -303,6 +303,8 @@ _OPERATION_CONTRACTS: dict[str, dict] = {
     "retrieve_associated_diseases": {"requires_all": ["resolved_target"], "provides": ["disease_target_association"]},
     "rank_diseases": {"requires_all": ["disease_target_association"], "provides": ["disease_ranking"]},
     "compare_disease_rank": {"requires_all": ["disease_ranking"], "provides": ["disease_rank_comparison"]},
+    "retrieve_genetic_evidence": {"requires_any": ["target_candidates", "disease_target_association"], "provides": ["genetic_evidence"]},
+    "filter_supported_without_clinical_drug": {"requires_all": ["genetic_evidence", "clinical_stage_evidence"], "provides": ["supported_without_clinical_drug"]},
 }
 
 
