@@ -8,6 +8,8 @@ from planner_acceptance import OPERATION_TABLE
 from pydantic import ValidationError
 from schemas import QueryManifestV2
 from execution.analysis import normalize_filters
+from execution.contracts import StepContext, StepResult, ToolCall
+
 
 FAILED = {"error", "not_executed"}
 HAS_PAYLOAD = {
@@ -165,6 +167,66 @@ def _post_to_board(board: dict, result: StepResult) -> None:
             board[capability] = {**old, **result.payload}
         else:
             board[capability] = result.payload
+
+
+
+
+def _check_dataflow(plan: QueryManifestV2) -> list[str]:
+    """Static version of the runtime check: every capability a step needs must
+    be provided by a step listed before it."""
+    problems = []
+    available: set[str] = set()
+    for step in plan.plan_steps:
+        entry = OPERATION_TABLE.get(step.operation)
+        if entry is None:
+            continue
+        missing = [cap for cap in entry.requires_all if cap not in available]
+        if entry.requires_any and not any(cap in available for cap in entry.requires_any):
+            missing.append("one of " + "/".join(entry.requires_any))
+        if missing:
+            problems.append(
+                f"{step.step_id}: {step.operation} needs {missing}, "
+                "which no earlier step provides"
+            )
+        available.update(entry.provides)
+    return problems
+
+
+def compile_plan(plan: QueryManifestV2) -> list[ToolCall]:
+    """Turn an approved plan into an ordered list of tool calls; runs nothing."""
+    problems = check_plan(plan) + _check_dataflow(plan)
+    if problems:
+        raise PlanRefusedError(problems)
+    entities = {entity.entity_ref: entity.model_dump() for entity in plan.entities}
+    calls = []
+    for step in plan.plan_steps:
+        entry = OPERATION_TABLE[step.operation]
+        adapter = ADAPTERS[step.operation]
+        calls.append(
+            ToolCall(
+                step_id=step.step_id,
+                operation=step.operation,
+                adapter=type(adapter).__name__,
+                source=adapter.source,
+                declared_sources=list(step.sources),
+                entities={ref: entities[ref] for ref in step.entity_refs},
+                filters=step.filters,
+                ranking=step.ranking.model_dump() if step.ranking else None,
+                aggregation=step.aggregation,
+                inputs={
+                    name: f"{ref.step_id}.{ref.output}"
+                    for name, ref in step.inputs.items()
+                },
+                depends_on=list(step.depends_on),
+                requires_all=list(entry.requires_all),
+                requires_any=list(entry.requires_any),
+                provides=list(entry.provides),
+                output_model=OUTPUT_MODELS[step.operation].__name__,
+            )
+        )
+    return calls
+
+
 
 
 def run_plan(plan: QueryManifestV2) -> list[StepResult]:

@@ -10,8 +10,8 @@ import json
 import sys
 from pathlib import Path
 
-from execution.compiler import FAILED, PlanRefusedError, run_plan
 from schemas import QueryManifestV2
+from execution.compiler import FAILED, PlanRefusedError, compile_plan, run_plan
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -21,6 +21,13 @@ def main(argv: list[str] | None = None) -> int:
         "--disease-id",
         help="use this ID for the disease entity instead of resolving its name",
     )
+
+    parser.add_argument(
+    "--dry-run",
+    action="store_true",
+    help="print the tool calls this plan compiles to, without running any",
+    )
+
     args = parser.parse_args(argv)
 
     plan = QueryManifestV2.model_validate(json.loads(args.plan.read_text()))
@@ -29,6 +36,17 @@ def main(argv: list[str] | None = None) -> int:
             if entity.entity_type == "disease":
                 entity.entity_id = args.disease_id
 
+
+    if args.dry_run:
+        try:
+            calls = compile_plan(plan)
+        except PlanRefusedError as exc:
+            print("Plan refused before any retrieval:")
+            for problem in exc.problems:
+                print(f"  - {problem}")
+            return 2
+        print(json.dumps([call.model_dump() for call in calls], ensure_ascii=False, indent=2))
+        return 0
     try:
         trace = run_plan(plan)
     except PlanRefusedError as exc:

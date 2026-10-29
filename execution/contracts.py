@@ -43,3 +43,24 @@ class Adapter(Protocol):
     source: str
 
     def run(self, ctx: StepContext) -> StepResult: ...
+
+
+
+class ToolCall(BaseModel):
+    """One executable call produced by compiling an approved plan step."""
+
+    step_id: str
+    operation: str
+    adapter: str
+    source: str
+    declared_sources: list[str] = Field(default_factory=list)
+    entities: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    filters: dict[str, Any] = Field(default_factory=dict)
+    ranking: dict[str, Any] | None = None
+    aggregation: dict[str, Any] | None = None
+    inputs: dict[str, str] = Field(default_factory=dict)
+    depends_on: list[str] = Field(default_factory=list)
+    requires_all: list[str] = Field(default_factory=list)
+    requires_any: list[str] = Field(default_factory=list)
+    provides: list[str] = Field(default_factory=list)
+    output_model: str
