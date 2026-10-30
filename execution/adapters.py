@@ -33,6 +33,11 @@ from execution.more_adapters import (
     DefineCoverageDenominatorsAdapter,
     CalculateCoverageRatesAdapter,
     CompareDiseaseRatesAdapter,
+    ResolveTargetVariantsAdapter,
+    RetrieveSafetyEvidenceAdapter,
+    RetrieveTrialTerminationsAdapter,
+    RetrieveNormalTissueExpressionAdapter,
+    IntegrateSafetyAndExpressionAdapter,
 )
 from query_opentargets import (
     OpenTargetsError,
@@ -61,6 +66,7 @@ from execution.common import (
     _resolved_for_step,
     _targets_for_step,
     error_result,
+    variant_payload,
 )
 
 class ResolveEntityAdapter:
@@ -282,7 +288,11 @@ class RetrieveTargetDrugsAdapter:
             operation=ctx.operation,
             status=status,
             source=self.source,
-            payload={"by_target": by_target, "failed_targets": failed_targets},
+            payload={
+                "by_target": by_target,
+                "failed_targets": failed_targets,
+                **variant_payload(targets),
+            },
             provides=["target_drug_evidence"],
             total_count=total,
             fetched_count=fetched,
@@ -816,4 +826,9 @@ ADAPTERS: dict[str, Adapter] = {
     "define_coverage_denominators": DefineCoverageDenominatorsAdapter(),
     "calculate_coverage_rates": CalculateCoverageRatesAdapter(),
     "compare_disease_rates": CompareDiseaseRatesAdapter(),
+    "resolve_target_variants": ResolveTargetVariantsAdapter(),
+    "retrieve_safety_evidence": RetrieveSafetyEvidenceAdapter(),
+    "retrieve_trial_terminations": RetrieveTrialTerminationsAdapter(),
+    "retrieve_normal_tissue_expression": RetrieveNormalTissueExpressionAdapter(),
+    "integrate_safety_and_expression": IntegrateSafetyAndExpressionAdapter(),
 }

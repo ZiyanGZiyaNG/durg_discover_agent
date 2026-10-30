@@ -8,6 +8,7 @@ covers.
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Any
 
@@ -33,6 +34,9 @@ from query_opentargets import (
     get_disease_drug_records,
     get_disease_lineage,
     get_target_classes,
+    get_target_safety_liabilities,
+    get_target_clinical_reports,
+    get_target_baseline_expression,
 )
 from datetime import datetime, timezone
 
@@ -619,6 +623,13 @@ class RetrieveMechanismsAdapter:
                 )
         return list(drugs.values())
 
+    @staticmethod
+    def _variant_payload(ctx: StepContext) -> dict[str, Any]:
+        if _resolved_for_step(ctx, "drug", "resolved_drug"):
+            return {}
+        inherited = (ctx.board.get("target_drug_evidence") or {}).get("variant_context")
+        return {"variant_context": inherited} if inherited else {}
+
     def run(self, ctx: StepContext) -> StepResult:
         start = time.monotonic()
         drugs = self._drugs(ctx)
@@ -652,7 +663,11 @@ class RetrieveMechanismsAdapter:
             operation=ctx.operation,
             status=status,
             source=self.source,
-            payload={"by_drug": by_drug, "failed_drugs": failed},
+            payload={
+                "by_drug": by_drug,
+                "failed_drugs": failed,
+                **self._variant_payload(ctx),
+            },
             provides=["mechanism_evidence"],
             total_count=len(drugs) + len(skipped),
             fetched_count=len(by_drug),
@@ -2369,6 +2384,505 @@ class CompareDiseaseRatesAdapter:
             provides=["disease_rate_comparison"],
             total_count=len(differences),
             fetched_count=len(differences),
+            truncated=truncated,
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+_VARIANT_MENTION = re.compile(
+    r"^\s*(?P<gene>[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*?)\s*[\s:_(\-]\s*"
+    r"(?P<variant>(?:p\.)?[A-Za-z]{1,3}\d{1,5}[A-Za-z*]{1,3})\)?\s*$"
+)
+
+
+def _split_variant(mention: str) -> tuple[str, str, str] | None:
+    """'KRAS G12C' -> ('KRAS', 'G12C', 'G12C'); None when no variant is named."""
+    match = _VARIANT_MENTION.match(mention)
+    if match is None:
+        return None
+    written = match.group("variant")
+    bare = written[2:] if written.startswith("p.") else written
+    return match.group("gene"), written, bare
+
+
+class ResolveTargetVariantsAdapter:
+    """Resolve the gene of each 'GENE VARIANT' mention and keep the variant beside it."""
+
+    source = "open_targets"
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        named = {
+            ref: entity
+            for ref, entity in ctx.entities.items()
+            if entity.get("entity_type") == "target"
+        }
+        if not named:
+            return error_result(ctx, self.source, start, "no target entity in this step")
+        resolved: dict[str, dict] = {}
+        try:
+            for ref, entity in named.items():
+                parsed = _split_variant(entity["mention"])
+                if parsed is None:
+                    return error_result(
+                        ctx,
+                        self.source,
+                        start,
+                        f"{entity['mention']!r} names no variant; "
+                        "resolve_target_variants needs a mention like 'KRAS G12C'",
+                    )
+                gene, written, label = parsed
+                resolved[ref] = {
+                    **resolve_mention(
+                        gene, "target", entity.get("entity_id"), resolver=resolve_entity
+                    ),
+                    "entity_type": "target",
+                    "mention": entity["mention"],
+                    "variant": label,
+                    "variant_as_written": written,
+                    "variant_evidence_scope": "gene_level_only",
+                }
+        except OpenTargetsError as exc:
+            return error_result(ctx, self.source, start, str(exc))
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status="success",
+            source=self.source,
+            payload=resolved,
+            provides=["resolved_target", "resolved_target_variants"],
+            total_count=len(resolved),
+            fetched_count=len(resolved),
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+
+def _filter_values(
+    filters: dict[str, Any], name: str, *, upper: bool = False, lower: bool = False
+) -> set[str] | None:
+    if name not in filters:
+        return None
+    condition = filters[name]
+    if isinstance(condition, dict):
+        if set(condition) - {"in", "eq"}:
+            raise ValueError(f"{name} filter supports only 'in' and 'eq'")
+        condition = condition.get("in", condition.get("eq"))
+    if condition is None:
+        raise ValueError(f"{name} filter has no value")
+    values = condition if isinstance(condition, list) else [condition]
+    cleaned = {str(value).strip() for value in values}
+    if upper:
+        cleaned = {value.upper() for value in cleaned}
+    if lower:
+        cleaned = {value.lower() for value in cleaned}
+    return cleaned
+
+
+class RetrieveSafetyEvidenceAdapter:
+    """Known target safety liabilities, quoted with their source."""
+
+    source = "open_targets"
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        unsupported = sorted(set(ctx.filters) - {"safety_evidence"})
+        if unsupported:
+            return error_result(
+                ctx, self.source, start, f"unsupported filter(s): {unsupported}"
+            )
+        try:
+            wanted = _flag(ctx.filters, "safety_evidence", True)
+        except ValueError as exc:
+            return error_result(ctx, self.source, start, str(exc))
+        if not wanted:
+            return error_result(
+                ctx, self.source, start, "safety_evidence filter can only be true here"
+            )
+        targets = _targets_for_step(ctx)
+        if not targets:
+            return error_result(
+                ctx, self.source, start, "retrieve_safety_evidence needs at least one resolved target"
+            )
+        by_target, failed = _collect_per_target(
+            targets, lambda target: get_target_safety_liabilities(target["id"])
+        )
+        errors = "; ".join(f"{tid}: {msg}" for tid, msg in failed.items())
+        if not by_target:
+            return error_result(ctx, self.source, start, errors)
+        total = sum(entry["event_count"] for entry in by_target.values())
+        if failed:
+            status = "partial_error"
+        else:
+            status = "success" if total else "no_records"
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status=status,
+            source=self.source,
+            payload={
+                "by_target": by_target,
+                "failed_targets": failed,
+                "limitations": [
+                    "Safety liabilities are curated target-level records; a target with no "
+                    "record has no evidence here, which is not evidence of safety.",
+                    "An event is a reported effect; it does not measure risk or frequency.",
+                    "Each event keeps its datasource, literature and URL; text is quoted, "
+                    "not re-interpreted.",
+                ],
+            },
+            provides=["safety_evidence"],
+            total_count=total,
+            fetched_count=total,
+            error=errors or None,
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+
+class RetrieveTrialTerminationsAdapter:
+    """Terminated trials linked to the target's drugs, with the recorded reason."""
+
+    source = "open_targets"
+    default_statuses = ("TERMINATED",)
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        unsupported = sorted(set(ctx.filters) - {"trial_status"})
+        if unsupported:
+            return error_result(
+                ctx, self.source, start, f"unsupported filter(s): {unsupported}"
+            )
+        try:
+            statuses = _filter_values(ctx.filters, "trial_status", upper=True) or set(
+                self.default_statuses
+            )
+        except ValueError as exc:
+            return error_result(ctx, self.source, start, str(exc))
+        targets = _targets_for_step(ctx)
+        if not targets:
+            return error_result(
+                ctx, self.source, start, "retrieve_trial_terminations needs at least one resolved target"
+            )
+        fetched_by_target, failed = _collect_per_target(
+            targets, lambda target: get_target_clinical_reports(target["id"])
+        )
+        errors = "; ".join(f"{tid}: {msg}" for tid, msg in failed.items())
+        if not fetched_by_target:
+            return error_result(ctx, self.source, start, errors)
+        by_target = {}
+        truncated = False
+        for target_id, found in fetched_by_target.items():
+            terminations = []
+            for report in found["reports"]:
+                if str(report.get("overall_status") or "").upper() not in statuses:
+                    continue
+                reason = report.get("why_stopped")
+                terminations.append({**report, "reason_recorded": bool(reason and reason.strip())})
+            by_target[target_id] = {
+                "target_id": target_id,
+                "target_symbol": found["target_symbol"],
+                "total_drug_row_count": found["total_drug_row_count"],
+                "fetched_drug_row_count": found["fetched_drug_row_count"],
+                "report_count_scanned": len(found["reports"]),
+                "terminated_count": len(terminations),
+                "without_reason_count": sum(1 for t in terminations if not t["reason_recorded"]),
+                "terminations": terminations,
+            }
+            truncated = truncated or (
+                found["fetched_drug_row_count"] < found["total_drug_row_count"]
+            )
+        kept = sum(entry["terminated_count"] for entry in by_target.values())
+        if failed:
+            status = "partial_error"
+        elif not kept:
+            status = "no_records"
+        elif truncated:
+            status = "partial_truncated"
+        else:
+            status = "success"
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status=status,
+            source=self.source,
+            payload={
+                "by_target": by_target,
+                "failed_targets": failed,
+                "status_filter": sorted(statuses),
+                "truncated": truncated,
+                "limitations": [
+                    "Reports come from Open Targets clinical-report records; each report "
+                    "names its own source, provider and URL. ClinicalTrials.gov is not "
+                    "queried directly.",
+                    "A termination reason is quoted exactly as recorded (why_stopped); "
+                    "reason_recorded is false when none exists and no reason is inferred. "
+                    "stop_reason_categories are Open Targets' own grouping of that text.",
+                    "Only reports linked to a drug or clinical candidate of the target are "
+                    "covered; finding none is not proof that no trial was terminated.",
+                ],
+            },
+            provides=["trial_termination_evidence"],
+            total_count=kept,
+            fetched_count=kept,
+            truncated=truncated,
+            error=errors or None,
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+
+class RetrieveNormalTissueExpressionAdapter:
+    """Baseline (normal tissue) expression, grouped by source and unit, never merged."""
+
+    source = "open_targets"
+    default_top_n = 10
+    _METRICS = {"expression_by_tissue", "median_expression", "median"}
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        unsupported = sorted(set(ctx.filters) - {"top_n", "tissue", "normal_tissue"})
+        if unsupported:
+            return error_result(
+                ctx, self.source, start, f"unsupported filter(s): {unsupported}"
+            )
+        try:
+            normal = _flag(ctx.filters, "normal_tissue", True)
+            tissues = _filter_values(ctx.filters, "tissue", lower=True)
+        except ValueError as exc:
+            return error_result(ctx, self.source, start, str(exc))
+        if not normal:
+            return error_result(
+                ctx, self.source, start, "only baseline (normal tissue) expression is supported"
+            )
+        top_n = ctx.filters.get("top_n", self.default_top_n)
+        if isinstance(top_n, bool) or not isinstance(top_n, int) or not 1 <= top_n <= 100:
+            return error_result(
+                ctx, self.source, start, "top_n must be an integer between 1 and 100"
+            )
+        direction = "descending"
+        if ctx.ranking is not None:
+            if ctx.ranking["primary_metric"] not in self._METRICS:
+                return error_result(
+                    ctx,
+                    self.source,
+                    start,
+                    "retrieve_normal_tissue_expression ranks by median expression only, "
+                    f"not {ctx.ranking['primary_metric']!r}",
+                )
+            if ctx.ranking.get("secondary_metrics"):
+                return error_result(
+                    ctx, self.source, start, "secondary ranking metrics are not supported"
+                )
+            direction = ctx.ranking["direction"]
+        targets = _targets_for_step(ctx)
+        if not targets:
+            return error_result(
+                ctx,
+                self.source,
+                start,
+                "retrieve_normal_tissue_expression needs at least one resolved target",
+            )
+        fetched_by_target, failed = _collect_per_target(
+            targets, lambda target: get_target_baseline_expression(target["id"])
+        )
+        errors = "; ".join(f"{tid}: {msg}" for tid, msg in failed.items())
+        if not fetched_by_target:
+            return error_result(ctx, self.source, start, errors)
+        by_target = {}
+        truncated = False
+        for target_id, found in fetched_by_target.items():
+            grouped: dict[str, list[dict[str, Any]]] = {}
+            tissue_index: dict[str, list[dict[str, Any]]] = {}
+            for row in found["rows"]:
+                if tissues is not None and not (
+                    str(row.get("tissue_name") or "").lower() in tissues
+                    or str(row.get("tissue_id") or "").lower() in tissues
+                ):
+                    continue
+                level = "cell_type" if row.get("celltype_name") else "tissue"
+                key = f"{row['datasource_id']}|{row['datatype_id']}|{row['unit']}|{level}"
+                grouped.setdefault(key, []).append(row)
+                if level == "tissue" and row.get("tissue_id"):
+                    tissue_index.setdefault(row["tissue_id"], []).append(
+                        {
+                            "datasource_id": row["datasource_id"],
+                            "datatype_id": row["datatype_id"],
+                            "unit": row["unit"],
+                            "median": row["median"],
+                        }
+                    )
+            groups = {}
+            for key, rows in grouped.items():
+                ranked = rank_rows(rows, "median", direction)
+                groups[key] = {
+                    "datasource_id": rows[0]["datasource_id"],
+                    "datatype_id": rows[0]["datatype_id"],
+                    "unit": rows[0]["unit"],
+                    "level": key.rsplit("|", 1)[1],
+                    "row_count": len(rows),
+                    "top": ranked[:top_n],
+                }
+            by_target[target_id] = {
+                "target_id": target_id,
+                "target_symbol": found["target_symbol"],
+                "total_row_count": found["total_row_count"],
+                "fetched_row_count": found["fetched_row_count"],
+                "groups": groups,
+                "tissue_index": tissue_index,
+            }
+            truncated = truncated or found["fetched_row_count"] < found["total_row_count"]
+        has_rows = any(entry["groups"] for entry in by_target.values())
+        if failed:
+            status = "partial_error"
+        elif not has_rows:
+            status = "no_records"
+        elif truncated:
+            status = "partial_truncated"
+        else:
+            status = "success"
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status=status,
+            source=self.source,
+            payload={
+                "by_target": by_target,
+                "failed_targets": failed,
+                "ranking_spec": ctx.ranking,
+                "truncated": truncated,
+                "limitations": [
+                    "Expression is not toxicity: high expression in a tissue does not show "
+                    "a safety risk.",
+                    "Each datasource, datatype and unit is its own group; values from "
+                    "different groups are never compared or merged.",
+                    "Tissues are ranked by median expression inside a group; a missing "
+                    "median stays missing and is listed last, never zero.",
+                    "Key findings should be confirmed in a specialized expression source "
+                    "(for example GTEx or the Human Protein Atlas) before they are relied on.",
+                ],
+            },
+            provides=["normal_tissue_expression"],
+            total_count=sum(e["total_row_count"] for e in by_target.values()),
+            fetched_count=sum(e["fetched_row_count"] for e in by_target.values()),
+            truncated=truncated,
+            error=errors or None,
+            elapsed_seconds=time.monotonic() - start,
+        )
+
+
+class IntegrateSafetyAndExpressionAdapter:
+    """Lay safety events, terminations and tissue expression side by side; facts only."""
+
+    source = "local_analysis"
+    _SOURCES = ("safety_evidence", "trial_termination_evidence", "normal_tissue_expression")
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        if ctx.filters:
+            return error_result(
+                ctx, self.source, start, f"unsupported filter(s): {sorted(ctx.filters)}"
+            )
+        data = {name: ctx.board.get(name) for name in self._SOURCES}
+        present = [name for name in self._SOURCES if data[name]]
+        if not present:
+            return error_result(
+                ctx,
+                self.source,
+                start,
+                "integrate_safety_and_expression needs safety_evidence, "
+                "trial_termination_evidence or normal_tissue_expression",
+            )
+        by = {name: (data[name] or {}).get("by_target") or {} for name in self._SOURCES}
+        target_ids = list(dict.fromkeys(tid for name in present for tid in by[name]))
+        targets_out = []
+        for target_id in target_ids:
+            symbol = next(
+                (
+                    by[name][target_id].get("target_symbol")
+                    for name in present
+                    if target_id in by[name] and by[name][target_id].get("target_symbol")
+                ),
+                "",
+            )
+            expression = by["normal_tissue_expression"].get(target_id)
+            index = expression["tissue_index"] if expression else None
+            safety = by["safety_evidence"].get(target_id)
+            risks = None
+            if safety is not None:
+                risks = []
+                for event in safety["events"]:
+                    tissues = []
+                    for sample in event.get("biosamples") or []:
+                        tissue_id = sample.get("tissue_id")
+                        tissues.append(
+                            {
+                                "tissue_id": tissue_id,
+                                "tissue_label": sample.get("tissue_label"),
+                                "cell_label": sample.get("cell_label"),
+                                "expression": (
+                                    None
+                                    if index is None or not tissue_id
+                                    else index.get(tissue_id, [])
+                                ),
+                            }
+                        )
+                    risks.append(
+                        {
+                            "event": event.get("event"),
+                            "event_id": event.get("event_id"),
+                            "datasource": event.get("datasource"),
+                            "literature": event.get("literature"),
+                            "url": event.get("url"),
+                            "effects": event.get("effects"),
+                            "tissues": tissues,
+                        }
+                    )
+            terminated = by["trial_termination_evidence"].get(target_id)
+            targets_out.append(
+                {
+                    "target_id": target_id,
+                    "target_symbol": symbol,
+                    "risks": risks,
+                    "terminations": terminated["terminations"] if terminated else None,
+                    "expression_groups": expression["groups"] if expression else None,
+                }
+            )
+        failed_targets = {name: data[name].get("failed_targets") or {} for name in present}
+        truncated = any(bool(data[name].get("truncated")) for name in present)
+        has_content = any(
+            item["risks"] or item["terminations"] or item["expression_groups"]
+            for item in targets_out
+        )
+        if any(failed_targets.values()):
+            status = "partial_error"
+        elif not has_content:
+            status = "no_records"
+        elif truncated:
+            status = "partial_truncated"
+        else:
+            status = "success"
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status=status,
+            source=self.source,
+            payload={
+                "targets": targets_out,
+                "sources_present": present,
+                "sources_missing": [name for name in self._SOURCES if name not in present],
+                "failed_targets": failed_targets,
+                "truncated": truncated,
+                "limitations": [
+                    "This step lists facts side by side and draws no risk conclusion; "
+                    "expression is not toxicity and a termination reason is only what the "
+                    "report states.",
+                    "In risks[].tissues[].expression, null means expression for that tissue "
+                    "is unavailable (not retrieved, or the event names no tissue id) and an "
+                    "empty list means no expression row carries the same tissue id; neither "
+                    "means zero expression.",
+                    "A safety event with no tissue id cannot be matched to expression data.",
+                ],
+            },
+            provides=["safety_expression_integration"],
+            total_count=len(targets_out),
+            fetched_count=len(targets_out),
             truncated=truncated,
             elapsed_seconds=time.monotonic() - start,
         )

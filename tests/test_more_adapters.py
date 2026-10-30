@@ -2153,3 +2153,476 @@ def test_rate_comparison_needs_two_diseases_and_takes_no_filters():
     bad = _compare_rates(_rate("A", 0.5), _rate("B", 1.0), filters={"top_n": 3})
     assert bad.status == "error" and "unsupported" in bad.error
     assert ADAPTERS["compare_disease_rates"].run(_ctx("compare_disease_rates", board={})).status == "error"
+
+
+def _variant_entities(*mentions):
+    return {f"e{i}": {"entity_type": "target", "mention": m} for i, m in enumerate(mentions, 1)}
+
+
+def _stub_gene_resolution(monkeypatch, seen=None):
+    def fake(mention, entity_type, entity_id=None, resolver=None):
+        if seen is not None:
+            seen.append(mention)
+        return {"id": KRAS["id"], "name": KRAS["name"], "symbol": mention}
+
+    monkeypatch.setattr(more, "resolve_mention", fake)
+
+
+def test_variants_resolve_to_the_gene_and_keep_each_variant(monkeypatch):
+    seen = []
+    _stub_gene_resolution(monkeypatch, seen)
+    result = ADAPTERS["resolve_target_variants"].run(
+        _ctx(
+            "resolve_target_variants",
+            entities=_variant_entities("KRAS G12C", "KRAS p.G12D", "KRAS(Gly12Val)"),
+        )
+    )
+    assert result.status == "success"
+    assert result.provides == ["resolved_target", "resolved_target_variants"]
+    assert seen == ["KRAS", "KRAS", "KRAS"]
+    assert [e["variant"] for e in result.payload.values()] == ["G12C", "G12D", "Gly12Val"]
+    assert all(e["variant_evidence_scope"] == "gene_level_only" for e in result.payload.values())
+    OUTPUT_MODELS["resolve_target_variants"].model_validate(result.payload)
+
+
+def test_a_mention_without_a_variant_is_refused(monkeypatch):
+    _stub_gene_resolution(monkeypatch)
+    result = ADAPTERS["resolve_target_variants"].run(
+        _ctx("resolve_target_variants", entities=_variant_entities("KRAS"))
+    )
+    assert result.status == "error" and "variant" in result.error
+    none = ADAPTERS["resolve_target_variants"].run(_ctx("resolve_target_variants"))
+    assert none.status == "error"
+
+
+def test_an_unresolvable_gene_is_an_error(monkeypatch):
+    def boom(*args, **kwargs):
+        raise OpenTargetsError("not found")
+
+    monkeypatch.setattr(more, "resolve_mention", boom)
+    result = ADAPTERS["resolve_target_variants"].run(
+        _ctx("resolve_target_variants", entities=_variant_entities("KRAS G12C"))
+    )
+    assert result.status == "error" and "not found" in result.error
+
+
+def test_variant_context_follows_the_drugs_and_mechanisms(monkeypatch):
+    import execution.adapters as adapters_module
+
+    _stub_gene_resolution(monkeypatch)
+    resolved = ADAPTERS["resolve_target_variants"].run(
+        _ctx("resolve_target_variants", entities=_variant_entities("KRAS G12C", "KRAS G12D"))
+    ).payload
+    monkeypatch.setattr(
+        adapters_module,
+        "get_target_drug_evidence_by_ids",
+        lambda ensembl_id, efo_id: {
+            "ensembl_id": ensembl_id,
+            "efo_id": efo_id,
+            "total_drug_count": 1,
+            "fetched_drug_count": 1,
+            "drugs": [
+                {
+                    "drug_id": "CHEMBL1",
+                    "drug_name": "X",
+                    "drug_type": "Small molecule",
+                    "max_clinical_stage": "APPROVAL",
+                    "mechanisms_of_action": [],
+                    "disease_indications": [],
+                    "exact_disease_match": False,
+                }
+            ],
+        },
+    )
+    drugs = ADAPTERS["retrieve_target_drugs"].run(
+        _ctx("retrieve_target_drugs", board={"resolved_target": resolved})
+    )
+    context = drugs.payload["variant_context"]
+    assert context["evidence_scope"] == "gene_level_only"
+    assert [v["variant"] for v in context["requested_variants"]] == ["G12C", "G12D"]
+    assert len(drugs.payload["by_target"]) == 1
+
+    monkeypatch.setattr(
+        more,
+        "get_drug_targets_by_id",
+        lambda chembl_id: {
+            "drug_id": chembl_id,
+            "drug_name": "X",
+            "drug_type": "Small molecule",
+            "mechanism_count": 1,
+            "mechanisms": [
+                {
+                    "action_type": "INHIBITOR",
+                    "mechanism_of_action": "GTPase KRas inhibitor",
+                    "target_ids": [KRAS["id"]],
+                }
+            ],
+            "targets": [{"target_id": KRAS["id"], "target_symbol": "KRAS", "target_name": "KRAS"}],
+            "limitations": [],
+        },
+    )
+    mechanisms = ADAPTERS["retrieve_mechanisms"].run(
+        _ctx("retrieve_mechanisms", board={"target_drug_evidence": drugs.payload})
+    )
+    assert mechanisms.payload["variant_context"]["evidence_scope"] == "gene_level_only"
+
+
+def test_plain_targets_get_no_variant_context(monkeypatch):
+    import execution.adapters as adapters_module
+
+    monkeypatch.setattr(
+        adapters_module,
+        "get_target_drug_evidence_by_ids",
+        lambda ensembl_id, efo_id: {
+            "ensembl_id": ensembl_id,
+            "efo_id": efo_id,
+            "total_drug_count": 0,
+            "fetched_drug_count": 0,
+            "drugs": [],
+        },
+    )
+    result = ADAPTERS["retrieve_target_drugs"].run(
+        _ctx("retrieve_target_drugs", board={"resolved_target": {"t": KRAS}})
+    )
+    assert "variant_context" not in result.payload
+
+
+T1 = {"id": "T1", "name": "n1", "symbol": "S1", "entity_type": "target"}
+T2 = {"id": "T2", "name": "n2", "symbol": "S2", "entity_type": "target"}
+_TWO_TARGETS = {"resolved_target": {"t1": T1, "t2": T2}}
+
+
+def _event(event, tissue_id=None, tissue_label=None):
+    return {
+        "event": event,
+        "event_id": "EFO_1",
+        "datasource": "ToxCast",
+        "literature": "123",
+        "url": None,
+        "effects": [{"direction": "Inhibition/Decrease/Downregulation", "dosing": "general"}],
+        "biosamples": (
+            [
+                {
+                    "tissue_id": tissue_id,
+                    "tissue_label": tissue_label,
+                    "cell_label": None,
+                    "cell_format": None,
+                }
+            ]
+            if tissue_id
+            else []
+        ),
+    }
+
+
+def _stub_safety(monkeypatch, events_by_target, failing=()):
+    def fake(target_id):
+        if target_id in failing:
+            raise OpenTargetsError("down")
+        events = events_by_target.get(target_id, [])
+        return {
+            "target_id": target_id,
+            "target_symbol": "S" + target_id[1:],
+            "event_count": len(events),
+            "events": events,
+        }
+
+    monkeypatch.setattr(more, "get_target_safety_liabilities", fake)
+
+
+def test_safety_events_are_listed_per_target_and_none_is_not_an_error(monkeypatch):
+    _stub_safety(monkeypatch, {"T1": [_event("liver toxicity", "UBERON_0002107", "liver")]})
+    result = ADAPTERS["retrieve_safety_evidence"].run(
+        _ctx("retrieve_safety_evidence", board=_TWO_TARGETS)
+    )
+    assert result.status == "success" and result.provides == ["safety_evidence"]
+    assert result.payload["by_target"]["T1"]["event_count"] == 1
+    assert result.payload["by_target"]["T2"]["events"] == []
+    OUTPUT_MODELS["retrieve_safety_evidence"].model_validate(result.payload)
+
+
+def test_safety_with_no_events_anywhere_is_no_records_and_failures_are_partial(monkeypatch):
+    _stub_safety(monkeypatch, {})
+    empty = ADAPTERS["retrieve_safety_evidence"].run(
+        _ctx("retrieve_safety_evidence", board=_TWO_TARGETS)
+    )
+    assert empty.status == "no_records"
+    _stub_safety(monkeypatch, {"T1": [_event("x")]}, failing=("T2",))
+    partial = ADAPTERS["retrieve_safety_evidence"].run(
+        _ctx("retrieve_safety_evidence", board=_TWO_TARGETS)
+    )
+    assert partial.status == "partial_error" and list(partial.payload["failed_targets"]) == ["T2"]
+
+
+def test_safety_refuses_bad_input(monkeypatch):
+    _stub_safety(monkeypatch, {})
+    run = lambda board, **filters: ADAPTERS["retrieve_safety_evidence"].run(
+        _ctx("retrieve_safety_evidence", board=board, filters=filters)
+    )
+    assert "unsupported" in run(_TWO_TARGETS, top_n=3).error
+    assert "true" in run(_TWO_TARGETS, safety_evidence=False).error
+    assert run({}).status == "error"
+    assert run(_TWO_TARGETS, safety_evidence=True).status == "no_records"
+
+
+def _report(report_id, status, why=None, categories=()):
+    return {
+        "report_id": report_id,
+        "report_type": "INDICATION",
+        "source": "ClinicalTrials.gov",
+        "provider": "x",
+        "url": f"https://example.org/{report_id}",
+        "title": "t",
+        "year": 2020,
+        "phase": "PHASE2",
+        "clinical_stage": "PHASE_2",
+        "overall_status": status,
+        "why_stopped": why,
+        "stop_reason_categories": list(categories),
+        "diseases": ["pancreatic neoplasm"],
+        "drugs": [{"drug_id": "CHEMBL1", "drug_name": "X"}],
+    }
+
+
+def _stub_reports(monkeypatch, reports, total=None):
+    monkeypatch.setattr(
+        more,
+        "get_target_clinical_reports",
+        lambda target_id: {
+            "target_id": target_id,
+            "target_symbol": "S" + target_id[1:],
+            "total_drug_row_count": 4 if total is None else total,
+            "fetched_drug_row_count": 4,
+            "reports": [dict(r) for r in reports],
+        },
+    )
+
+
+_REPORTS = [
+    _report("R1", "TERMINATED", "Sponsor decision", ["business_administrative"]),
+    _report("R2", "TERMINATED"),
+    _report("R3", "COMPLETED"),
+    _report("R4", "WITHDRAWN", "No funding"),
+]
+
+
+def test_terminations_quote_the_reason_and_flag_missing_ones(monkeypatch):
+    _stub_reports(monkeypatch, _REPORTS)
+    result = ADAPTERS["retrieve_trial_terminations"].run(
+        _ctx("retrieve_trial_terminations", board={"resolved_target": {"t1": T1}})
+    )
+    found = result.payload["by_target"]["T1"]
+    assert [t["report_id"] for t in found["terminations"]] == ["R1", "R2"]
+    assert found["terminations"][0]["why_stopped"] == "Sponsor decision"
+    assert [t["reason_recorded"] for t in found["terminations"]] == [True, False]
+    assert (
+        found["report_count_scanned"],
+        found["terminated_count"],
+        found["without_reason_count"],
+    ) == (4, 2, 1)
+    assert result.provides == ["trial_termination_evidence"] and result.status == "success"
+    OUTPUT_MODELS["retrieve_trial_terminations"].model_validate(result.payload)
+
+
+def test_termination_status_filter_is_case_insensitive_and_truncation_is_flagged(monkeypatch):
+    _stub_reports(monkeypatch, _REPORTS, total=9)
+    result = ADAPTERS["retrieve_trial_terminations"].run(
+        _ctx(
+            "retrieve_trial_terminations",
+            board={"resolved_target": {"t1": T1}},
+            filters={"trial_status": {"in": ["withdrawn", "Terminated"]}},
+        )
+    )
+    assert result.payload["status_filter"] == ["TERMINATED", "WITHDRAWN"]
+    assert result.payload["by_target"]["T1"]["terminated_count"] == 3
+    assert result.status == "partial_truncated" and result.truncated is True
+
+
+def test_terminations_with_none_found_or_bad_input(monkeypatch):
+    _stub_reports(monkeypatch, [_report("R3", "COMPLETED")])
+    none = ADAPTERS["retrieve_trial_terminations"].run(
+        _ctx("retrieve_trial_terminations", board={"resolved_target": {"t1": T1}})
+    )
+    assert none.status == "no_records"
+    bad = ADAPTERS["retrieve_trial_terminations"].run(
+        _ctx(
+            "retrieve_trial_terminations",
+            board={"resolved_target": {"t1": T1}},
+            filters={"top_n": 1},
+        )
+    )
+    assert bad.status == "error" and "unsupported" in bad.error
+    assert ADAPTERS["retrieve_trial_terminations"].run(
+        _ctx("retrieve_trial_terminations")
+    ).status == "error"
+
+
+def _expr_row(datasource, tissue_id, tissue, median, unit="TPM", datatype="rna", celltype=None):
+    return {
+        "datasource_id": datasource,
+        "datatype_id": datatype,
+        "unit": unit,
+        "tissue_id": tissue_id,
+        "tissue_name": tissue,
+        "celltype_name": celltype,
+        "median": median,
+        "min": None,
+        "max": None,
+        "q1": None,
+        "q3": None,
+        "specificity_score": None,
+        "distribution_score": 0.1,
+    }
+
+
+_EXPR_ROWS = [
+    _expr_row("gtex", "UBERON_0002107", "liver", 50.0),
+    _expr_row("gtex", "UBERON_0000955", "brain", 10.0),
+    _expr_row("gtex", "UBERON_0000948", "heart", None),
+    _expr_row("hpa", "UBERON_0002048", "lung", 3.0, unit="level", datatype="protein"),
+    _expr_row(
+        "hpa", "UBERON_0002107", "liver", 1.0, unit="level", datatype="protein", celltype="hepatocyte"
+    ),
+]
+
+
+def _stub_expression(monkeypatch, total=5):
+    monkeypatch.setattr(
+        more,
+        "get_target_baseline_expression",
+        lambda target_id: {
+            "target_id": target_id,
+            "target_symbol": "S" + target_id[1:],
+            "total_row_count": total,
+            "fetched_row_count": len(_EXPR_ROWS),
+            "rows": [dict(r) for r in _EXPR_ROWS],
+        },
+    )
+
+
+def test_expression_is_grouped_by_source_and_unit_and_ranked_with_missing_last(monkeypatch):
+    _stub_expression(monkeypatch)
+    result = ADAPTERS["retrieve_normal_tissue_expression"].run(
+        _ctx("retrieve_normal_tissue_expression", board={"resolved_target": {"t1": T1}})
+    )
+    groups = result.payload["by_target"]["T1"]["groups"]
+    assert set(groups) == {
+        "gtex|rna|TPM|tissue",
+        "hpa|protein|level|tissue",
+        "hpa|protein|level|cell_type",
+    }
+    assert [r["tissue_name"] for r in groups["gtex|rna|TPM|tissue"]["top"]] == [
+        "liver",
+        "brain",
+        "heart",
+    ]
+    assert groups["gtex|rna|TPM|tissue"]["top"][-1]["median"] is None
+    index = result.payload["by_target"]["T1"]["tissue_index"]
+    assert [e["datasource_id"] for e in index["UBERON_0002107"]] == ["gtex"]
+    assert result.status == "success"
+    OUTPUT_MODELS["retrieve_normal_tissue_expression"].model_validate(result.payload)
+
+
+def test_expression_top_n_tissue_filter_and_ranking_direction(monkeypatch):
+    _stub_expression(monkeypatch)
+    ranking = {
+        "primary_metric": "expression_by_tissue",
+        "direction": "ascending",
+        "secondary_metrics": [],
+    }
+    result = ADAPTERS["retrieve_normal_tissue_expression"].run(
+        _ctx(
+            "retrieve_normal_tissue_expression",
+            board={"resolved_target": {"t1": T1}},
+            filters={"top_n": 1, "tissue": {"in": ["Liver", "brain"]}},
+            ranking=ranking,
+        )
+    )
+    top = result.payload["by_target"]["T1"]["groups"]["gtex|rna|TPM|tissue"]["top"]
+    assert [r["tissue_name"] for r in top] == ["brain"]
+
+
+def test_expression_refuses_bad_input_and_flags_truncation(monkeypatch):
+    _stub_expression(monkeypatch, total=99)
+    run = lambda **extra: ADAPTERS["retrieve_normal_tissue_expression"].run(
+        _ctx("retrieve_normal_tissue_expression", board={"resolved_target": {"t1": T1}}, **extra)
+    )
+    assert run().status == "partial_truncated"
+    assert "unsupported" in run(filters={"score": 1}).error
+    assert "normal tissue" in run(filters={"normal_tissue": False}).error
+    assert "top_n" in run(filters={"top_n": 0}).error
+    bad_metric = {"primary_metric": "p_value", "direction": "descending", "secondary_metrics": []}
+    assert "median" in run(ranking=bad_metric).error
+    assert ADAPTERS["retrieve_normal_tissue_expression"].run(
+        _ctx("retrieve_normal_tissue_expression")
+    ).status == "error"
+
+
+def _integration_board(monkeypatch):
+    _stub_safety(
+        monkeypatch,
+        {
+            "T1": [
+                _event("liver toxicity", "UBERON_0002107", "liver"),
+                _event("neurotoxicity", "UBERON_9999999", "unknown tissue"),
+                _event("general event"),
+            ]
+        },
+    )
+    _stub_reports(monkeypatch, _REPORTS)
+    _stub_expression(monkeypatch)
+    board = {"resolved_target": {"t1": T1}}
+    for operation in (
+        "retrieve_safety_evidence",
+        "retrieve_trial_terminations",
+        "retrieve_normal_tissue_expression",
+    ):
+        result = ADAPTERS[operation].run(_ctx(operation, board=board))
+        for capability in result.provides:
+            board[capability] = result.payload
+    return board
+
+
+def test_integration_matches_event_tissues_to_expression_by_id_only(monkeypatch):
+    result = ADAPTERS["integrate_safety_and_expression"].run(
+        _ctx("integrate_safety_and_expression", board=_integration_board(monkeypatch))
+    )
+    assert result.status == "success" and result.provides == ["safety_expression_integration"]
+    item = result.payload["targets"][0]
+    liver, other, general = item["risks"]
+    assert [e["median"] for e in liver["tissues"][0]["expression"]] == [50.0]
+    assert other["tissues"][0]["expression"] == []
+    assert general["tissues"] == []
+    assert len(item["terminations"]) == 2 and item["expression_groups"]
+    assert result.payload["sources_missing"] == []
+    OUTPUT_MODELS["integrate_safety_and_expression"].model_validate(result.payload)
+
+
+def test_integration_works_with_one_source_and_marks_gaps(monkeypatch):
+    board = _integration_board(monkeypatch)
+    result = ADAPTERS["integrate_safety_and_expression"].run(
+        _ctx(
+            "integrate_safety_and_expression",
+            board={"safety_evidence": board["safety_evidence"]},
+        )
+    )
+    item = result.payload["targets"][0]
+    assert item["terminations"] is None and item["expression_groups"] is None
+    assert item["risks"][0]["tissues"][0]["expression"] is None
+    assert result.payload["sources_missing"] == [
+        "trial_termination_evidence",
+        "normal_tissue_expression",
+    ]
+
+
+def test_integration_carries_failures_and_needs_some_input(monkeypatch):
+    board = _integration_board(monkeypatch)
+    board["safety_evidence"] = {**board["safety_evidence"], "failed_targets": {"T2": "down"}}
+    result = ADAPTERS["integrate_safety_and_expression"].run(
+        _ctx("integrate_safety_and_expression", board=board)
+    )
+    assert result.status == "partial_error"
+    assert result.payload["failed_targets"]["safety_evidence"] == {"T2": "down"}
+    assert ADAPTERS["integrate_safety_and_expression"].run(
+        _ctx("integrate_safety_and_expression", board={})
+    ).status == "error"

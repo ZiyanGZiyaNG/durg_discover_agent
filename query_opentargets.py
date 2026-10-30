@@ -1045,3 +1045,187 @@ def get_target_classes(ensembl_ids: list[str]) -> dict[str, dict[str, Any]]:
                 ],
             }
     return found
+
+
+TARGET_SAFETY_QUERY = """
+query TargetSafety($ensemblId: String!) {
+  target(ensemblId: $ensemblId) {
+    id
+    approvedSymbol
+    safetyLiabilities {
+      event eventId datasource literature url
+      effects { direction dosing }
+      biosamples { tissueId tissueLabel cellId cellLabel cellFormat }
+    }
+  }
+}
+"""
+
+TARGET_CLINICAL_REPORTS_QUERY = """
+query TargetClinicalReports($ensemblId: String!) {
+  target(ensemblId: $ensemblId) {
+    id
+    approvedSymbol
+    drugAndClinicalCandidates {
+      count
+      rows {
+        drug { id name }
+        clinicalReports {
+          id type source provider url title year clinicalStage
+          trialPhase trialOverallStatus trialWhyStopped trialStopReasonCategories
+          diseases { diseaseFromSource disease { id name } }
+        }
+      }
+    }
+  }
+}
+"""
+
+TARGET_BASELINE_EXPRESSION_QUERY = """
+query TargetBaselineExpression($ensemblId: String!, $size: Int!) {
+  target(ensemblId: $ensemblId) {
+    id
+    approvedSymbol
+    baselineExpression(page: {index: 0, size: $size}) {
+      count
+      rows {
+        datasourceId datatypeId unit median min max q1 q3
+        specificity_score distribution_score
+        tissueBiosampleFromSource
+        tissueBiosample { biosampleId biosampleName }
+        celltypeBiosample { biosampleId biosampleName }
+      }
+    }
+  }
+}
+"""
+
+
+def _target_record(data: dict[str, Any], ensembl_id: str) -> dict[str, Any]:
+    target = data.get("target")
+    if not target:
+        raise OpenTargetsError(f"Target record unavailable: {ensembl_id}")
+    return target
+
+
+def get_target_safety_liabilities(ensembl_id: str) -> dict[str, Any]:
+    target = _target_record(
+        _graphql(TARGET_SAFETY_QUERY, {"ensemblId": ensembl_id}), ensembl_id
+    )
+    events = [
+        {
+            "event": item.get("event"),
+            "event_id": item.get("eventId"),
+            "datasource": item.get("datasource") or "",
+            "literature": item.get("literature"),
+            "url": item.get("url"),
+            "effects": [
+                {"direction": effect.get("direction") or "", "dosing": effect.get("dosing")}
+                for effect in (item.get("effects") or [])
+            ],
+            "biosamples": [
+                {
+                    "tissue_id": sample.get("tissueId"),
+                    "tissue_label": sample.get("tissueLabel"),
+                    "cell_label": sample.get("cellLabel"),
+                    "cell_format": sample.get("cellFormat"),
+                }
+                for sample in (item.get("biosamples") or [])
+            ],
+        }
+        for item in (target.get("safetyLiabilities") or [])
+    ]
+    return {
+        "target_id": target["id"],
+        "target_symbol": target.get("approvedSymbol") or "",
+        "event_count": len(events),
+        "events": events,
+    }
+
+
+def get_target_clinical_reports(ensembl_id: str) -> dict[str, Any]:
+    """Clinical reports linked to the target's drugs, one entry per report id."""
+    target = _target_record(
+        _graphql(TARGET_CLINICAL_REPORTS_QUERY, {"ensemblId": ensembl_id}), ensembl_id
+    )
+    block = target.get("drugAndClinicalCandidates") or {}
+    rows = block.get("rows") or []
+    reports: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        drug = row.get("drug") or {}
+        for report in row.get("clinicalReports") or []:
+            entry = reports.setdefault(
+                report["id"],
+                {
+                    "report_id": report["id"],
+                    "report_type": report.get("type"),
+                    "source": report.get("source"),
+                    "provider": report.get("provider"),
+                    "url": report.get("url"),
+                    "title": report.get("title"),
+                    "year": report.get("year"),
+                    "phase": report.get("trialPhase"),
+                    "clinical_stage": report.get("clinicalStage"),
+                    "overall_status": report.get("trialOverallStatus"),
+                    "why_stopped": report.get("trialWhyStopped"),
+                    "stop_reason_categories": list(report.get("trialStopReasonCategories") or []),
+                    "diseases": list(
+                        dict.fromkeys(
+                            name
+                            for item in (report.get("diseases") or [])
+                            for name in [
+                                (item.get("disease") or {}).get("name")
+                                or item.get("diseaseFromSource")
+                            ]
+                            if name
+                        )
+                    ),
+                    "drugs": [],
+                },
+            )
+            if drug.get("id") and all(d["drug_id"] != drug["id"] for d in entry["drugs"]):
+                entry["drugs"].append({"drug_id": drug["id"], "drug_name": drug.get("name") or ""})
+    return {
+        "target_id": target["id"],
+        "target_symbol": target.get("approvedSymbol") or "",
+        "total_drug_row_count": int(block.get("count") or len(rows)),
+        "fetched_drug_row_count": len(rows),
+        "reports": list(reports.values()),
+    }
+
+
+def get_target_baseline_expression(ensembl_id: str, page_size: int = 1000) -> dict[str, Any]:
+    target = _target_record(
+        _graphql(TARGET_BASELINE_EXPRESSION_QUERY, {"ensemblId": ensembl_id, "size": page_size}),
+        ensembl_id,
+    )
+    block = target.get("baselineExpression") or {}
+    rows = block.get("rows") or []
+    formatted = []
+    for row in rows:
+        tissue = row.get("tissueBiosample") or {}
+        cell = row.get("celltypeBiosample") or {}
+        formatted.append(
+            {
+                "datasource_id": row.get("datasourceId") or "",
+                "datatype_id": row.get("datatypeId") or "",
+                "unit": row.get("unit") or "",
+                "tissue_id": tissue.get("biosampleId"),
+                "tissue_name": tissue.get("biosampleName") or row.get("tissueBiosampleFromSource"),
+                "celltype_name": cell.get("biosampleName"),
+                "median": row.get("median"),
+                "min": row.get("min"),
+                "max": row.get("max"),
+                "q1": row.get("q1"),
+                "q3": row.get("q3"),
+                "specificity_score": row.get("specificity_score"),
+                "distribution_score": row.get("distribution_score"),
+            }
+        )
+    return {
+        "target_id": target["id"],
+        "target_symbol": target.get("approvedSymbol") or "",
+        "total_row_count": int(block.get("count") or len(rows)),
+        "fetched_row_count": len(rows),
+        "rows": formatted,
+    }

@@ -602,6 +602,106 @@ class DiseaseRateComparison(_Record):
     failed_diseases: dict[str, str] = {}
     limitations: list[str]
 
+
+class SafetyEvent(_Record):
+    event: str | None = None
+    event_id: str | None = None
+    datasource: str = ""
+    literature: str | None = None
+    url: str | None = None
+    effects: list[dict[str, Any]]
+    biosamples: list[dict[str, Any]]
+
+
+class TargetSafety(_Record):
+    target_id: str
+    target_symbol: str = ""
+    event_count: int
+    events: list[SafetyEvent]
+
+
+class SafetyEvidence(_Record):
+    by_target: dict[str, TargetSafety]
+    failed_targets: dict[str, str]
+    limitations: list[str]
+
+
+class TrialTermination(_Record):
+    report_id: str
+    overall_status: str | None = None
+    why_stopped: str | None = None
+    reason_recorded: bool
+    stop_reason_categories: list[str]
+    source: str | None = None
+    provider: str | None = None
+    url: str | None = None
+    title: str | None = None
+    year: int | None = None
+    phase: str | None = None
+    drugs: list[dict[str, Any]]
+    diseases: list[str]
+
+
+class TargetTerminations(_Record):
+    target_id: str
+    target_symbol: str = ""
+    total_drug_row_count: int
+    fetched_drug_row_count: int
+    report_count_scanned: int
+    terminated_count: int
+    without_reason_count: int
+    terminations: list[TrialTermination]
+
+
+class TrialTerminationEvidence(_Record):
+    by_target: dict[str, TargetTerminations]
+    failed_targets: dict[str, str]
+    status_filter: list[str]
+    truncated: bool
+    limitations: list[str]
+
+
+class ExpressionGroup(_Record):
+    datasource_id: str
+    datatype_id: str
+    unit: str
+    level: str
+    row_count: int
+    top: list[dict[str, Any]]
+
+
+class TargetExpression(_Record):
+    target_id: str
+    target_symbol: str = ""
+    total_row_count: int
+    fetched_row_count: int
+    groups: dict[str, ExpressionGroup]
+    tissue_index: dict[str, list[dict[str, Any]]]
+
+
+class NormalTissueExpression(_Record):
+    by_target: dict[str, TargetExpression]
+    failed_targets: dict[str, str]
+    ranking_spec: dict[str, Any] | None
+    truncated: bool
+    limitations: list[str]
+
+
+class SafetyExpressionTarget(_Record):
+    target_id: str
+    target_symbol: str = ""
+    risks: list[dict[str, Any]] | None
+    terminations: list[dict[str, Any]] | None
+    expression_groups: dict[str, Any] | None
+
+
+class SafetyExpressionIntegration(_Record):
+    targets: list[SafetyExpressionTarget]
+    sources_present: list[str]
+    sources_missing: list[str]
+    failed_targets: dict[str, dict[str, str]]
+    truncated: bool
+    limitations: list[str]
 # operation -> the model its payload must satisfy (same keys as ADAPTERS)
 OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "resolve_disease": ResolvedEntities,
@@ -653,4 +753,9 @@ OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "define_coverage_denominators": CoverageDefinition,
     "calculate_coverage_rates": CoverageRates,
     "compare_disease_rates": DiseaseRateComparison,
+    "resolve_target_variants": ResolvedEntities,
+    "retrieve_safety_evidence": SafetyEvidence,
+    "retrieve_trial_terminations": TrialTerminationEvidence,
+    "retrieve_normal_tissue_expression": NormalTissueExpression,
+    "integrate_safety_and_expression": SafetyExpressionIntegration,
 }

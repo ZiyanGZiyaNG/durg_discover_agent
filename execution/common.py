@@ -123,3 +123,30 @@ def association_rows(board: dict[str, Any]) -> list[dict[str, Any]]:
                 }
             )
     return rows
+
+
+
+def variant_payload(targets: list[dict[str, Any]]) -> dict[str, Any]:
+    """{"variant_context": ...} when any target was named with a variant, else {}."""
+    requested = [
+        {
+            "target_id": target["id"],
+            "target_symbol": target.get("symbol") or "",
+            "variant": target["variant"],
+        }
+        for target in targets
+        if target.get("variant")
+    ]
+    if not requested:
+        return {}
+    return {
+        "variant_context": {
+            "requested_variants": requested,
+            "evidence_scope": "gene_level_only",
+            "statement": (
+                "Open Targets holds drug and mechanism records per target, not per variant. "
+                "These results describe the target as a whole and do not show that a drug "
+                "acts on the named variant."
+            ),
+        }
+    }

@@ -897,22 +897,16 @@ that no earlier step provides. Three representative plans compile in tests
 A live run of `phase2_pdac_known_targets_batched_v4.json` completed all six
 steps in 19.2 seconds and produced a ten-target ranking.
 
-Coverage is partial: adapters exist for 42 of 64 operations, and 11 of 18
-acceptance cases have every required operation implemented. Of the remaining 22
-operations, 11 need only Open Targets data (variant resolution, cross-indication
-drugs and cancers, safety and
-normal-tissue expression). The other
-11 depend on trial or publication data (ClinicalTrials.gov, Europe PMC), which
-has no query module yet.
-Added since the last update: `retrieve_associated_diseases`,
-Evidence-type comparison added: `retrieve_datasource_evidence`,
-`retrieve_evidence_by_type`, `compare_evidence_types`,
-`normalize_comparison_dimensions` and `compare_targets`. "Evidence type" is the
-Open Targets datatype; datasources are grouped under it using the
-`associationDatasources` metadata. Raw evidence records are not downloaded in
-these steps, and `compare_targets` names a leader only when every target has a
-score for that type (missing is never zero, ties have no leader). 
-`rank_diseases`,
+Coverage is partial: adapters exist for 54 of 64 operations, and 15 of 18
+acceptance cases have every required operation implemented. The remaining 10
+operations (`retrieve_clinical_trials`, `filter_phase2_not_pdac_approved`,
+`retrieve_interventions`, `classify_mechanism_categories`,
+`aggregate_category_distribution`, `rank_mechanism_categories`,
+`retrieve_trial_status_and_stop_reasons`, `retrieve_negative_publications`,
+`classify_termination_reasons`, `aggregate_failed_programs`) depend on trial or
+publication data (ClinicalTrials.gov, Europe PMC), which has no query module yet.
+
+Added earlier: `retrieve_associated_diseases`, `rank_diseases`,
 `compare_disease_rank` (generic replacement for the PDAC-specific
 `compare_pdac_rank`), `retrieve_genetic_evidence`,
 `retrieve_genetic_and_somatic_evidence`, `filter_supported_without_clinical_drug`,
@@ -921,6 +915,41 @@ evidence use the Open Targets `genetic_association` and `somatic_mutation`
 datatype scores. "Strong" evidence has no project-wide threshold, so the filter
 requires one in the plan. "No drug" means no drug record in Open Targets known
 drugs on the evaluation date, and a failed drug lookup is reported as
-unevaluable, not as no drug. The Planner does not yet emit `inputs` references.
-The full suite passes N tests with no failures. The target-translation layer
+unevaluable, not as no drug.
+
+Evidence-type comparison: `retrieve_datasource_evidence`,
+`retrieve_evidence_by_type`, `compare_evidence_types`,
+`normalize_comparison_dimensions` and `compare_targets`. "Evidence type" is the
+Open Targets datatype; datasources are grouped under it using the
+`associationDatasources` metadata. Raw evidence records are not downloaded in
+these steps, and `compare_targets` names a leader only when every target has a
+score for that type (missing is never zero, ties have no leader).
+
+Cross-indication paths: `retrieve_disease_drugs`, `retrieve_target_cancers` and
+`join_cross_indication_paths`. Cancer areas come from the Open Targets
+therapeutic-area metadata; a disease with no area is counted as unclassified, not
+as non-cancer, and truncated lists are flagged.
+
+Kinase coverage: `classify_kinase_targets`, `define_coverage_denominators`,
+`calculate_coverage_rates` and `compare_disease_rates`. Kinase membership comes
+from the Open Targets target classes, denominators are stated explicitly, and a
+target whose lookup failed is unevaluable rather than counted as uncovered.
+
+Variants, safety and expression: `resolve_target_variants`,
+`retrieve_safety_evidence`, `retrieve_trial_terminations`,
+`retrieve_normal_tissue_expression` and `integrate_safety_and_expression`.
+Open Targets holds drug and mechanism records per target, not per variant, so
+variant steps resolve the gene, keep the variant beside it and mark downstream
+drug and mechanism results `variant_context.evidence_scope = gene_level_only`;
+they are never presented as variant-specific. Safety liabilities keep their
+datasource, literature and URL, and no record is not evidence of safety.
+Termination reasons come from Open Targets clinical reports (ClinicalTrials.gov
+is not queried directly), are quoted exactly, and `reason_recorded` is false when
+none exists. Baseline expression is grouped by datasource, datatype and unit and
+never merged across groups; expression is not toxicity. The integration step
+lists safety events, terminations and expression side by side and matches tissues
+by tissue id only, without drawing a risk conclusion.
+
+The Planner does not yet emit `inputs` references.
+The full suite passes 356 tests with no failures. The target-translation layer
 rule is still provisional and awaits research-team approval.
