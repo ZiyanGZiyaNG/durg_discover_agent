@@ -837,6 +837,65 @@ class MechanismClassification(BaseModel):
     records: list[MechanismClassificationRecord]
     limitations: list[str]
 
+class TerminationClassificationRecord(BaseModel):
+    record_id: str | None = None
+    origin: str
+    status: str | None = None
+    drug_names: list[str]
+    why_stopped: str | None = None
+    categories: list[str]
+    matched_terms: list[str]
+    source_stop_reason_categories: list[str] = []
+
+
+class TerminationClassification(BaseModel):
+    rule_version: str
+    records: list[TerminationClassificationRecord]
+    category_counts: dict[str, int]
+    limitations: list[str]
+
+
+class FailedProgram(BaseModel):
+    program: str
+    terminated_record_count: int
+    category_counts: dict[str, int]
+    record_ids: list[str]
+    has_recorded_safety_or_efficacy_reason: bool
+
+
+class FailedPrograms(BaseModel):
+    program_count: int
+    record_count: int
+    programs: list[FailedProgram]
+    limitations: list[str]
+
+
+class PhaseFilterRecord(BaseModel):
+    target_id: str
+    drug_id: str
+    drug_name: str | None = None
+    max_clinical_stage: str | None = None
+    stage_rank: int
+    approval_checked: bool
+
+
+class PhaseFilterExclusion(BaseModel):
+    target_id: str
+    drug_id: str | None = None
+    max_clinical_stage: str | None = None
+    reason: str
+
+
+class PhaseFilterResult(BaseModel):
+    disease_id: str | None = None
+    disease_name: str | None = None
+    min_stage_rank: int
+    records: list[PhaseFilterRecord]
+    kept_target_ids: list[str]
+    excluded: list[PhaseFilterExclusion]
+    failed: dict[str, dict[str, str]]
+    limitations: list[str]
+
 
 
 # operation -> the model its payload must satisfy (same keys as ADAPTERS)
@@ -902,4 +961,7 @@ OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "aggregate_category_distribution": CategoryDistribution,
     "rank_mechanism_categories": RankedCategories,
     "classify_mechanism_categories": MechanismClassification,
+    "classify_termination_reasons": TerminationClassification,
+    "aggregate_failed_programs": FailedPrograms,
+    "filter_phase2_not_pdac_approved": PhaseFilterResult,
 }

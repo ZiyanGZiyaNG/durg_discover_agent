@@ -78,7 +78,10 @@ from execution.external_source_adapters import (
 
 from execution.trial_analysis_adapters import (
     AggregateCategoryDistributionAdapter,
+    AggregateFailedProgramsAdapter,
     ClassifyMechanismCategoriesAdapter,
+    ClassifyTerminationReasonsAdapter,
+    FilterPhase2NotApprovedAdapter,
     RankMechanismCategoriesAdapter,
 )
 
@@ -851,4 +854,7 @@ ADAPTERS: dict[str, Adapter] = {
     "aggregate_category_distribution": AggregateCategoryDistributionAdapter(),
     "rank_mechanism_categories": RankMechanismCategoriesAdapter(),
     "classify_mechanism_categories": ClassifyMechanismCategoriesAdapter(),
+    "classify_termination_reasons": ClassifyTerminationReasonsAdapter(),
+    "aggregate_failed_programs": AggregateFailedProgramsAdapter(),
+    "filter_phase2_not_pdac_approved": FilterPhase2NotApprovedAdapter(),
 }
