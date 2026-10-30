@@ -164,13 +164,14 @@ class RankMechanismCategoriesAdapter:
             operation=ctx.operation,
             status="success" if total else "no_records",
             source=self.source,
-            provides=["mechanism_classification"],
             payload={
                 "ranked_by": "category_count",
                 "rankings": rankings,
                 "limitations": [
                     "Categories with equal counts are ordered alphabetically; the order "
                     "between them carries no meaning.",
+                    "category_fraction is the share of records, and a record can carry "
+                    "several categories, so fractions can add up to more than 1.",
                 ],
             },
             total_count=total,
@@ -251,6 +252,7 @@ class ClassifyMechanismCategoriesAdapter:
             operation=ctx.operation,
             status="success",
             source=self.source,
+            provides=["mechanism_classification"],
             payload={
                 "rule_version": MECHANISM_RULE_VERSION,
                 "records": records,
