@@ -227,6 +227,26 @@ def compile_plan(plan: QueryManifestV2) -> list[ToolCall]:
     return calls
 
 
+def _inherit_truncation(step, result: StepResult, done: dict[str, StepResult]) -> StepResult:
+    """A local analysis run on cut-off upstream data cannot claim to be complete."""
+    if result.status != "success" or result.source != "local_analysis":
+        return result
+    cut_off = [
+        d
+        for d in step.depends_on
+        if done[d].truncated or done[d].status == "partial_truncated"
+    ]
+    if not cut_off:
+        return result
+    note = (
+        f"Computed from truncated upstream data ({', '.join(cut_off)}); "
+        "counts cover only the records that were fetched."
+    )
+    if isinstance(result.payload, dict):
+        limits = result.payload.setdefault("limitations", [])
+        if isinstance(limits, list):
+            limits.append(note)
+    return result.model_copy(update={"status": "partial_truncated", "truncated": True})
 
 
 def run_plan(plan: QueryManifestV2) -> list[StepResult]:
@@ -275,7 +295,9 @@ def run_plan(plan: QueryManifestV2) -> list[StepResult]:
                 aggregation=step.aggregation,
                 inputs=inputs,
             )
-            result = _check_output(ADAPTERS[step.operation].run(ctx))
+            result = _inherit_truncation(
+                step, _check_output(ADAPTERS[step.operation].run(ctx)), done
+            )
             _post_to_board(board, result)
             if result.status in HAS_PAYLOAD:
                 for output in step.outputs:
