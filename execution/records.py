@@ -822,6 +822,21 @@ class RankedCategories(BaseModel):
     rankings: dict[str, list[RankedCategory]]
     limitations: list[str]
 
+class MechanismClassificationRecord(BaseModel):
+    drug_id: str
+    drug_name: str | None = None
+    modality: str
+    mechanism_categories: list[str]
+    action_types: list[str]
+    mechanism_count: int
+    multi_label: bool
+
+
+class MechanismClassification(BaseModel):
+    rule_version: str
+    records: list[MechanismClassificationRecord]
+    limitations: list[str]
+
 
 
 # operation -> the model its payload must satisfy (same keys as ADAPTERS)
@@ -886,4 +901,5 @@ OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "retrieve_interventions": InterventionEvidence,
     "aggregate_category_distribution": CategoryDistribution,
     "rank_mechanism_categories": RankedCategories,
+    "classify_mechanism_categories": MechanismClassification,
 }

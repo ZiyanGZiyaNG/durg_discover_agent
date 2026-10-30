@@ -78,6 +78,7 @@ from execution.external_source_adapters import (
 
 from execution.trial_analysis_adapters import (
     AggregateCategoryDistributionAdapter,
+    ClassifyMechanismCategoriesAdapter,
     RankMechanismCategoriesAdapter,
 )
 
@@ -849,4 +850,5 @@ ADAPTERS: dict[str, Adapter] = {
     "retrieve_interventions": RetrieveInterventionsAdapter(),
     "aggregate_category_distribution": AggregateCategoryDistributionAdapter(),
     "rank_mechanism_categories": RankMechanismCategoriesAdapter(),
+    "classify_mechanism_categories": ClassifyMechanismCategoriesAdapter(),
 }

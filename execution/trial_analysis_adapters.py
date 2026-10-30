@@ -165,3 +165,93 @@ class RankMechanismCategoriesAdapter:
             fetched_count=total,
             elapsed_seconds=time.monotonic() - start,
         )
+
+MECHANISM_RULE_VERSION = "mechanism_category_rules_v1"
+
+
+def _mechanism_category(action_type: str | None) -> str:
+    text = (action_type or "").upper()
+    if not text:
+        return "unspecified"
+    if "INHIBITOR" in text:
+        return "inhibition"
+    if "DEGRADER" in text:
+        return "degradation"
+    if "ANTAGONIST" in text or "BLOCKER" in text or "INVERSE AGONIST" in text:
+        return "antagonism_or_blockade"
+    if "AGONIST" in text or "ACTIVATOR" in text or "OPENER" in text:
+        return "activation"
+    if "MODULATOR" in text:
+        return "modulation"
+    return "other"
+
+
+class ClassifyMechanismCategoriesAdapter:
+    """Rule-based mechanism categories per drug; one drug can carry several categories."""
+
+    source = "local_analysis"
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        by_drug = None
+        for candidate in list(ctx.inputs.values()) + list(reversed(list(ctx.board.values()))):
+            if not isinstance(candidate, dict):
+                continue
+            drugs = candidate.get("by_drug")
+            if (
+                isinstance(drugs, dict)
+                and drugs
+                and all(isinstance(d, dict) and "mechanisms" in d for d in drugs.values())
+            ):
+                by_drug = drugs
+                break
+        if by_drug is None:
+            return error_result(
+                ctx,
+                self.source,
+                start,
+                "classify_mechanism_categories needs drug mechanism records "
+                "(from retrieve_mechanisms or retrieve_drug_targets)",
+            )
+
+        records = []
+        for drug_id, drug in by_drug.items():
+            mechanisms = drug.get("mechanisms") or []
+            categories = sorted(
+                {_mechanism_category(m.get("action_type")) for m in mechanisms}
+            )
+            records.append(
+                {
+                    "drug_id": drug.get("drug_id") or drug_id,
+                    "drug_name": drug.get("drug_name"),
+                    "modality": drug.get("modality") or "unknown",
+                    "mechanism_categories": categories or ["unspecified"],
+                    "action_types": sorted(
+                        {m.get("action_type") for m in mechanisms if m.get("action_type")}
+                    ),
+                    "mechanism_count": len(mechanisms),
+                    "multi_label": len(categories) > 1,
+                }
+            )
+
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status="success",
+            source=self.source,
+            payload={
+                "rule_version": MECHANISM_RULE_VERSION,
+                "records": records,
+                "limitations": [
+                    "Categories come from a fixed keyword rule on the Open Targets "
+                    "action_type (see rule_version); they describe the recorded "
+                    "mechanism, not efficacy.",
+                    "A drug with several recorded mechanisms keeps every category "
+                    "(multi-label), so category counts can exceed the number of drugs.",
+                    "modality is 'unknown' unless modality evidence was retrieved.",
+                ],
+            },
+            total_count=len(records),
+            fetched_count=len(records),
+            elapsed_seconds=time.monotonic() - start,
+        )
