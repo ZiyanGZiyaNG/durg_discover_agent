@@ -25,6 +25,12 @@ def _rows_of(payload) -> list[dict] | None:
         return rows
     return None
 
+def _has_empty_rows(candidate) -> bool:
+    """An upstream result whose record list exists but is empty."""
+    return isinstance(candidate, dict) and any(
+        isinstance(candidate.get(key), list) and not candidate[key] for key in ROW_KEYS
+    )
+
 
 class AggregateCategoryDistributionAdapter:
     """Count records per category for the requested fields."""
@@ -59,6 +65,10 @@ class AggregateCategoryDistributionAdapter:
             if all(metric in found[0] for metric in metrics):
                 rows = found
                 break
+        if rows is None and ctx.inputs and all(
+            _has_empty_rows(value) for value in ctx.inputs.values()
+        ):
+            rows = []
         if rows is None:
             return error_result(
                 ctx,
@@ -92,7 +102,7 @@ class AggregateCategoryDistributionAdapter:
         return StepResult(
             step_id=ctx.step_id,
             operation=ctx.operation,
-            status="success",
+            status="success" if total else "no_records",
             source=self.source,
             payload={
                 "source_row_count": total,
