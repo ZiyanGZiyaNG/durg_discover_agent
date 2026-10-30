@@ -963,5 +963,5 @@ OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "classify_mechanism_categories": MechanismClassification,
     "classify_termination_reasons": TerminationClassification,
     "aggregate_failed_programs": FailedPrograms,
-    "filter_phase2_not_pdac_approved": PhaseFilterResult,
+    "filter_phase2_not_approved_for_disease": PhaseFilterResult,
 }

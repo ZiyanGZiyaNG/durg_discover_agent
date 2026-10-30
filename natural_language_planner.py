@@ -934,7 +934,7 @@ OPERATION_GROUPS = {
 COMPACT_BOUNDARY_OPERATIONS = {
     "aggregate_category_distribution",
     "discover_targets",
-    "filter_phase2_not_pdac_approved",
+    "filter_phase2_not_approved_for_disease",
     "rank_targets",
     "retrieve_approved_indications",
     "retrieve_target_drugs",

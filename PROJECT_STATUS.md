@@ -899,14 +899,15 @@ steps in 19.2 seconds and produced a ten-target ranking.
 
 **Coverage is complete.** Every operation in `OPERATION_TABLE` has an adapter and an output model, so any approved plan can be compiled and executed (`set(OPERATION_TABLE) == set(ADAPTERS) == set(OUTPUT_MODELS)`).
 
-- Verified end to end through `run_plan` on `outputs/plans/test_trials_literature_v1.json` (KRAS in pancreatic cancer): trials, stop reasons, termination classification, failed programs, category distribution, ranking, interventions and negative publications. `classify_mechanism_categories` and `filter_phase2_not_pdac_approved` were verified on their own, not yet through a full `run_plan`.
+- Verified end to end through `run_plan` on `outputs/plans/test_trials_literature_v1.json` (KRAS in pancreatic cancer): trials, stop reasons, termination classification, failed programs, category distribution, ranking, interventions and negative publications. The mechanism chain (`retrieve_mechanisms`, `classify_mechanism_categories`, distribution, ranking) and the Phase 2 chain (`retrieve_target_drugs`, `retrieve_clinical_stage`, `retrieve_approved_indications`, `filter_phase2_not_approved_for_disease`) also ran end to end on `outputs/plans/test_mechanism_phase2_v1.json` (KRAS).
 - New source modules: `source_http.py` (timeout, retry, `SourceError`), `query_clinicaltrials.py` and `query_europepmc.py`, with LangChain wrappers in `tools/`.
 - ClinicalTrials.gov and Europe PMC are searched with the canonical disease name OR the user's own wording (plain English only), because the ontology name alone can miss most records (1 trial for "exocrine pancreatic carcinoma" versus 191 for "pancreatic cancer"). The exact search string is kept in each query's provenance.
 - Steps with `source: local_analysis` that run on truncated upstream data are reported as `partial_truncated` with a limitation naming the upstream step. An empty upstream table gives `no_records`; a table whose rows lack the requested field is still an `error`.
 - `mechanism_category_rules_v1` and `termination_reason_rules_v1` are keyword heuristics. They are versioned and return `matched_terms`, but the lab has not reviewed them, so they should not back a published number yet.
 - `category_fraction` uses records as the denominator, so fractions add up to more than 1 when a record has several categories. The distribution result says so; the ranking result does not yet.
 - `classify_termination_reasons`, `aggregate_category_distribution` and `classify_mechanism_categories` post a capability to the board although `OPERATION_TABLE` declares `provides: []`. Harmless today; the table and the adapters should be reconciled.
-- `filter_phase2_not_pdac_approved` is still named after PDAC although the operation is meant to be general. Renaming is separate work.
+- `filter_phase2_not_approved_for_disease` was renamed from `filter_phase2_not_pdac_approved`. The old name stays a reviewed alias for acceptance matching only; a plan that uses it does not execute.
+- `retrieve_approved_indications` queries at most 50 drugs per step (extra drugs mark the step `partial_truncated`), and the Phase 2 filter detects approval only by exact disease ID, so approvals under a broader or narrower disease term are not seen.
 
 Added earlier: `retrieve_associated_diseases`, `rank_diseases`,
 `compare_disease_rank` (generic replacement for the PDAC-specific

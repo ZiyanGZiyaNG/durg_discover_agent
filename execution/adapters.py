@@ -877,5 +877,5 @@ ADAPTERS: dict[str, Adapter] = {
     "classify_mechanism_categories": ClassifyMechanismCategoriesAdapter(),
     "classify_termination_reasons": ClassifyTerminationReasonsAdapter(),
     "aggregate_failed_programs": AggregateFailedProgramsAdapter(),
-    "filter_phase2_not_pdac_approved": FilterPhase2NotApprovedAdapter(),
+    "filter_phase2_not_approved_for_disease": FilterPhase2NotApprovedAdapter(),
 }
