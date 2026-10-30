@@ -30,8 +30,16 @@ def _parse_study(study: Dict[str, Any]) -> Dict[str, Any]:
         "enrollment": (design.get("enrollmentInfo") or {}).get("count"),
         "conditions": cond.get("conditions") or [],
         "interventions": [
-            {"name": i.get("name"), "type": i.get("type")}
+            {
+                "name": i.get("name"),
+                "type": i.get("type"),
+                "arm_group_labels": i.get("armGroupLabels") or [],
+            }
             for i in (arms.get("interventions") or [])
+        ],
+        "arm_groups": [
+            {"label": g.get("label"), "type": g.get("type")}
+            for g in (arms.get("armGroups") or [])
         ],
         "sponsor": (sponsor.get("leadSponsor") or {}).get("name"),
         "url": f"https://clinicaltrials.gov/study/{nct_id}" if nct_id else None,
