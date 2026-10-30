@@ -533,6 +533,22 @@ class FilterTargetsAdapter:
         )
 
 
+MAX_APPROVAL_DRUGS = 50
+
+
+def _drugs_for_step(ctx: StepContext) -> list[dict]:
+    """Resolved drug entities, else the drugs found for the targets in an earlier step."""
+    explicit = _resolved_for_step(ctx, "drug", "resolved_drug")
+    if explicit:
+        return explicit
+    by_target = (ctx.board.get("target_drug_evidence") or {}).get("by_target") or {}
+    drugs: dict[str, dict] = {}
+    for record in by_target.values():
+        for drug in record.get("drugs") or []:
+            drugs.setdefault(
+                drug["drug_id"], {"id": drug["drug_id"], "name": drug.get("drug_name", "")}
+            )
+    return list(drugs.values())
 
 
 class RetrieveApprovedIndicationsAdapter:
@@ -540,8 +556,8 @@ class RetrieveApprovedIndicationsAdapter:
 
     def run(self, ctx: StepContext) -> StepResult:
         start = time.monotonic()
-        drugs = _resolved_for_step(ctx, "drug", "resolved_drug")
-        if not drugs:
+        all_drugs = _drugs_for_step(ctx)
+        if not all_drugs:
             return StepResult(
                 step_id=ctx.step_id,
                 operation=ctx.operation,
@@ -550,10 +566,15 @@ class RetrieveApprovedIndicationsAdapter:
                 error="retrieve_approved_indications needs at least one resolved drug",
                 elapsed_seconds=time.monotonic() - start,
             )
+        drugs = all_drugs[:MAX_APPROVAL_DRUGS]
+        not_queried = len(all_drugs) - len(drugs)
         by_drug, failed_drugs = _collect_per_target(
             drugs, lambda drug: get_drug_indications_by_id(drug["id"])
         )
-        errors = "; ".join(f"{did}: {msg}" for did, msg in failed_drugs.items())
+        notes = [f"{did}: {msg}" for did, msg in failed_drugs.items()]
+        if not_queried:
+            notes.append(f"{not_queried} drug(s) not queried (limit {MAX_APPROVAL_DRUGS})")
+        errors = "; ".join(notes)
         if not by_drug:
             return StepResult(
                 step_id=ctx.step_id,
@@ -565,7 +586,7 @@ class RetrieveApprovedIndicationsAdapter:
             )
         total = sum(e["total_indication_count"] for e in by_drug.values())
         fetched = sum(e["fetched_indication_count"] for e in by_drug.values())
-        truncated = fetched < total
+        truncated = fetched < total or not_queried > 0
         if failed_drugs:
             status = "partial_error"
         elif total == 0:
