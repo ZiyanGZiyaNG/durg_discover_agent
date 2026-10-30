@@ -23,6 +23,8 @@ def _parse_study(study: Dict[str, Any]) -> Dict[str, Any]:
         "title": ident.get("briefTitle"),
         "status": status.get("overallStatus"),
         "start_date": (status.get("startDateStruct") or {}).get("date"),
+        "completion_date": (status.get("completionDateStruct") or {}).get("date"),
+        "why_stopped": status.get("whyStopped"),
         "phases": design.get("phases") or [],
         "study_type": design.get("studyType"),
         "enrollment": (design.get("enrollmentInfo") or {}).get("count"),

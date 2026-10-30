@@ -702,6 +702,80 @@ class SafetyExpressionIntegration(_Record):
     failed_targets: dict[str, dict[str, str]]
     truncated: bool
     limitations: list[str]
+
+class ClinicalTrialRecord(BaseModel):
+    nct_id: str | None = None
+    title: str | None = None
+    status: str | None = None
+    start_date: str | None = None
+    completion_date: str | None = None
+    why_stopped: str | None = None
+    stop_reason_recorded: bool | None = None
+    phases: list[str] = []
+    study_type: str | None = None
+    enrollment: int | None = None
+    conditions: list[str] = []
+    interventions: list[dict] = []
+    sponsor: str | None = None
+    url: str | None = None
+
+
+class ClinicalTrialQuery(BaseModel):
+    source: str
+    api_version: str
+    query: dict
+    retrieved_at: str
+    total_count: int | None = None
+    returned_count: int
+    pages_fetched: int
+    truncated: bool
+    items: list[ClinicalTrialRecord]
+
+
+class ClinicalTrialEvidence(BaseModel):
+    queries: dict[str, ClinicalTrialQuery]
+    failed_queries: dict[str, str]
+    status_filter: list[str]
+    truncated: bool
+    limitations: list[str]
+
+
+class LiteratureRecord(BaseModel):
+    source_db: str | None = None
+    id: str | None = None
+    pmid: str | None = None
+    pmcid: str | None = None
+    doi: str | None = None
+    title: str | None = None
+    authors: str | None = None
+    journal: str | None = None
+    year: str | int | None = None
+    pub_date: str | None = None
+    cited_by: int | None = None
+    open_access: str | bool | None = None
+    abstract: str | None = None
+    url: str | None = None
+
+
+class LiteratureQuery(BaseModel):
+    source: str
+    query: dict
+    retrieved_at: str
+    total_count: int | None = None
+    returned_count: int
+    pages_fetched: int
+    truncated: bool
+    items: list[LiteratureRecord]
+
+
+class LiteratureEvidence(BaseModel):
+    queries: dict[str, LiteratureQuery]
+    failed_queries: dict[str, str]
+    truncated: bool
+    limitations: list[str]
+
+
+
 # operation -> the model its payload must satisfy (same keys as ADAPTERS)
 OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "resolve_disease": ResolvedEntities,
@@ -758,4 +832,7 @@ OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "retrieve_trial_terminations": TrialTerminationEvidence,
     "retrieve_normal_tissue_expression": NormalTissueExpression,
     "integrate_safety_and_expression": SafetyExpressionIntegration,
+    "retrieve_clinical_trials": ClinicalTrialEvidence,
+    "retrieve_trial_status_and_stop_reasons": ClinicalTrialEvidence, 
+    "retrieve_negative_publications": LiteratureEvidence,
 }

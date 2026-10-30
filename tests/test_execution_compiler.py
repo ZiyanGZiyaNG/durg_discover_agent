@@ -8,6 +8,7 @@ from execution.compiler import PlanRefusedError, run_plan
 from query_opentargets import OpenTargetsError
 from schemas import QueryManifestV2
 from execution.contracts import StepResult
+from execution.adapters import ADAPTERS
 
 
 def _step(step_id, operation, refs, deps=()):
@@ -67,7 +68,8 @@ def test_two_resolve_steps_succeed():
     assert trace[1].provides == ["resolved_target"]
 
 
-def test_unknown_operation_is_refused_before_any_retrieval():
+def test_unknown_operation_is_refused_before_any_retrieval(monkeypatch):
+    monkeypatch.delitem(ADAPTERS, "retrieve_clinical_trials")
     plan = _plan(
         [
             _step("s1", "resolve_disease", ["d"]),

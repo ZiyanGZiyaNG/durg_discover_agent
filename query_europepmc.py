@@ -83,3 +83,29 @@ def search_target_disease(target_symbol: str, disease_name: str, **kwargs) -> Di
         f"AND SRC:MED"
     )
     return search_articles(query, **kwargs)
+
+
+NEGATIVE_TERMS = [
+    "lack of efficacy",
+    "no clinical benefit",
+    "failed",
+    "discontinued",
+    "terminated",
+    "toxicity",
+    "adverse events",
+    "dose-limiting",
+]
+
+
+def search_negative_literature(
+    subject: str, disease: Optional[str] = None, **kwargs
+) -> Dict[str, Any]:
+    """標的或藥物出現在標題／摘要，且摘要含負面結果關鍵字。"""
+    negative = " OR ".join(f'ABSTRACT:"{t}"' for t in NEGATIVE_TERMS)
+    query = (
+        f'(TITLE:"{subject}" OR ABSTRACT:"{subject}") '
+        f"AND ({negative}) AND SRC:MED"
+    )
+    if disease:
+        query += f' AND (TITLE:"{disease}" OR ABSTRACT:"{disease}")'
+    return search_articles(query, **kwargs)

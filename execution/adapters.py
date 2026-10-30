@@ -69,6 +69,12 @@ from execution.common import (
     variant_payload,
 )
 
+from execution.external_source_adapters import (
+    RetrieveClinicalTrialsAdapter,
+    RetrieveNegativePublicationsAdapter,
+    RetrieveTrialStatusAndStopReasonsAdapter,
+)
+
 class ResolveEntityAdapter:
     source = "open_targets"
 
@@ -831,4 +837,7 @@ ADAPTERS: dict[str, Adapter] = {
     "retrieve_trial_terminations": RetrieveTrialTerminationsAdapter(),
     "retrieve_normal_tissue_expression": RetrieveNormalTissueExpressionAdapter(),
     "integrate_safety_and_expression": IntegrateSafetyAndExpressionAdapter(),
+    "retrieve_clinical_trials": RetrieveClinicalTrialsAdapter(),
+    "retrieve_trial_status_and_stop_reasons": RetrieveTrialStatusAndStopReasonsAdapter(),
+    "retrieve_negative_publications": RetrieveNegativePublicationsAdapter(),
 }

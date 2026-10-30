@@ -6,6 +6,7 @@ import pytest
 from execution.__main__ import main
 from execution.compiler import PlanRefusedError, compile_plan
 from schemas import QueryManifestV2
+from execution.adapters import ADAPTERS
 
 PLANS = Path(__file__).resolve().parent.parent / "outputs" / "plans"
 KNOWN_TARGETS = PLANS / "phase2_pdac_known_targets_batched_v4.json"
@@ -103,7 +104,8 @@ def test_olaparib_manifest_compiles_through_the_drug_adapters():
     assert check.output_model == "IndicationChecks"
 
 
-def test_operation_without_an_adapter_is_refused():
+def test_operation_without_an_adapter_is_refused(monkeypatch):
+    monkeypatch.delitem(ADAPTERS, "retrieve_clinical_trials")
     data = _base()
     data["plan_steps"] = [
         data["plan_steps"][0],
