@@ -75,11 +75,24 @@ def search_articles(
     }
 
 
-def search_target_disease(target_symbol: str, disease_name: str, **kwargs) -> Dict[str, Any]:
-    """基因與疾病都必須出現在標題或摘要，只收 PubMed 來源。"""
+def _as_list(value) -> list:
+    if not value:
+        return []
+    return [value] if isinstance(value, str) else [v for v in value if v]
+
+
+def _phrase_clause(terms) -> str:
+    """每個詞都比對標題與摘要，詞與詞之間用 OR。"""
+    return "(" + " OR ".join(
+        f'TITLE:"{t}" OR ABSTRACT:"{t}"' for t in _as_list(terms)
+    ) + ")"
+
+
+def search_target_disease(target_symbol: str, disease_name, **kwargs) -> Dict[str, Any]:
+    """基因與疾病都必須出現在標題或摘要，只收 PubMed 來源。disease_name 可為字串或同義詞清單。"""
     query = (
         f'(TITLE:"{target_symbol}" OR ABSTRACT:"{target_symbol}") '
-        f'AND (TITLE:"{disease_name}" OR ABSTRACT:"{disease_name}") '
+        f"AND {_phrase_clause(disease_name)} "
         f"AND SRC:MED"
     )
     return search_articles(query, **kwargs)
@@ -97,15 +110,13 @@ NEGATIVE_TERMS = [
 ]
 
 
-def search_negative_literature(
-    subject: str, disease: Optional[str] = None, **kwargs
-) -> Dict[str, Any]:
-    """標的或藥物出現在標題／摘要，且摘要含負面結果關鍵字。"""
+def search_negative_literature(subject: str, disease=None, **kwargs) -> Dict[str, Any]:
+    """標的或藥物出現在標題／摘要，且摘要含負面結果關鍵字。disease 可為字串或同義詞清單。"""
     negative = " OR ".join(f'ABSTRACT:"{t}"' for t in NEGATIVE_TERMS)
     query = (
         f'(TITLE:"{subject}" OR ABSTRACT:"{subject}") '
         f"AND ({negative}) AND SRC:MED"
     )
     if disease:
-        query += f' AND (TITLE:"{disease}" OR ABSTRACT:"{disease}")'
+        query += f" AND {_phrase_clause(disease)}"
     return search_articles(query, **kwargs)

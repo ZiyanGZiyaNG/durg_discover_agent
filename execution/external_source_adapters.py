@@ -33,9 +33,7 @@ class RetrieveClinicalTrialsAdapter:
             return error_result(ctx, self.source, start, str(exc))
         status_list = sorted(statuses) if statuses else None
 
-        diseases = [
-            d.get("name") for d in _resolved_for_step(ctx, "disease", "resolved_disease")
-        ] or [None]
+        diseases = _disease_term_groups(ctx) or [None]
         targets = [
             t.get("symbol") or t.get("name")
             for t in _resolved_for_step(ctx, "target", "resolved_target")
@@ -45,20 +43,21 @@ class RetrieveClinicalTrialsAdapter:
         ]
 
         queries: dict[str, dict] = {}
-        for disease in diseases:
-            label_disease = disease or "any disease"
+        for terms in diseases:
+            label_disease = terms[0] if terms else "any disease"
+            condition = _or_join(terms)
             for symbol in targets:
                 queries[f"{symbol} | {label_disease}"] = {
-                    "condition": disease,
+                    "condition": condition,
                     "term": symbol,
                 }
             for drug in drugs:
                 queries[f"{drug} | {label_disease}"] = {
-                    "condition": disease,
+                    "condition": condition,
                     "intervention": drug,
                 }
-            if not targets and not drugs and disease:
-                queries[disease] = {"condition": disease}
+            if not targets and not drugs and condition:
+                queries[label_disease] = {"condition": condition}
         if not queries:
             return error_result(
                 ctx,
@@ -126,6 +125,38 @@ class RetrieveClinicalTrialsAdapter:
         )
 
 
+def _disease_term_groups(ctx: StepContext) -> list[list[str]]:
+    """每個已解析的疾病一組搜尋詞：標準名在前，加上使用者原話（僅限純英文）。"""
+    resolved = ctx.board.get("resolved_disease", {})
+    refs = [
+        ref for ref, entity in ctx.entities.items() if entity.get("entity_type") == "disease"
+    ] or list(resolved)
+    groups = []
+    for ref in refs:
+        entry = resolved.get(ref)
+        if not entry:
+            continue
+        mention = ((ctx.entities.get(ref) or {}).get("mention") or "").strip()
+        candidates = [entry.get("name")]
+        if mention and mention.isascii() and not set('()"') & set(mention):
+            candidates.append(mention)
+        terms: list[str] = []
+        for name in candidates:
+            if name and name.lower() not in [t.lower() for t in terms]:
+                terms.append(name)
+        if terms:
+            groups.append(terms)
+    return groups
+
+
+def _or_join(terms: list[str] | None) -> str | None:
+    """ClinicalTrials.gov 的 OR 寫法：(A) OR (B)，不加引號以保留同義詞展開。"""
+    if not terms:
+        return None
+    if len(terms) == 1:
+        return terms[0]
+    return " OR ".join(f"({t})" for t in terms)
+
 class RetrieveTrialStatusAndStopReasonsAdapter(RetrieveClinicalTrialsAdapter):
     """Trial status plus the stop reason exactly as recorded; none is inferred."""
 
@@ -158,9 +189,7 @@ class RetrieveNegativePublicationsAdapter:
             return error_result(
                 ctx, self.source, start, f"unsupported filter(s): {sorted(ctx.filters)}"
             )
-        diseases = [
-            d.get("name") for d in _resolved_for_step(ctx, "disease", "resolved_disease")
-        ] or [None]
+        diseases = _disease_term_groups(ctx) or [None]
         subjects = [
             t.get("symbol") or t.get("name")
             for t in _resolved_for_step(ctx, "target", "resolved_target")
@@ -168,10 +197,10 @@ class RetrieveNegativePublicationsAdapter:
             d.get("name") for d in _resolved_for_step(ctx, "drug", "resolved_drug")
         ]
         queries = {
-            f"{subject} | {disease or 'any disease'}": (subject, disease)
+            f"{subject} | {terms[0] if terms else 'any disease'}": (subject, terms)
             for subject in subjects
             if subject
-            for disease in diseases
+            for terms in diseases
         }
         if not queries:
             return error_result(
