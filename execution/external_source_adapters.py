@@ -238,3 +238,136 @@ class RetrieveNegativePublicationsAdapter:
             truncated=truncated,
             elapsed_seconds=time.monotonic() - start,
         )
+
+
+COMBINATION_TYPES = {"DRUG", "BIOLOGICAL", "COMBINATION_PRODUCT"}
+COMPARATOR_ARM_TYPES = {
+    "ACTIVE_COMPARATOR",
+    "PLACEBO_COMPARATOR",
+    "SHAM_COMPARATOR",
+    "NO_INTERVENTION",
+}
+
+
+def _trial_payloads(ctx: StepContext) -> list[dict]:
+    payloads = [
+        p for p in ctx.inputs.values() if isinstance(p, dict) and "queries" in p
+    ]
+    if not payloads:
+        board_payload = ctx.board.get("clinical_trial_evidence")
+        if isinstance(board_payload, dict) and "queries" in board_payload:
+            payloads = [board_payload]
+    return payloads
+
+
+def _intervention_roles(trial: dict) -> list[dict]:
+    arm_types = {g.get("label"): g.get("type") for g in trial.get("arm_groups") or []}
+    items = []
+    for item in trial.get("interventions") or []:
+        labels = item.get("arm_group_labels") or []
+        types = {arm_types.get(label) for label in labels} - {None}
+        if "EXPERIMENTAL" in types:
+            role = "experimental"
+        elif types and types <= COMPARATOR_ARM_TYPES:
+            role = "comparator"
+        else:
+            role = "unspecified"
+        items.append(
+            {
+                "name": item.get("name"),
+                "type": item.get("type"),
+                "role": role,
+                "arm_group_labels": list(labels),
+            }
+        )
+    return items
+
+
+def _combination_arms(trial: dict) -> list[str] | None:
+    interventions = trial.get("interventions") or []
+    if not any(i.get("arm_group_labels") for i in interventions):
+        return None
+    counts: dict[str, int] = {}
+    for item in interventions:
+        if item.get("type") not in COMBINATION_TYPES:
+            continue
+        for label in item.get("arm_group_labels") or []:
+            counts[label] = counts.get(label, 0) + 1
+    return sorted(label for label, n in counts.items() if n >= 2)
+
+
+class RetrieveInterventionsAdapter:
+    """Interventions, combinations and arm roles extracted from retrieved trial records."""
+
+    source = "clinicaltrials_gov"
+
+    def run(self, ctx: StepContext) -> StepResult:
+        start = time.monotonic()
+        if ctx.filters:
+            return error_result(
+                ctx, self.source, start, f"unsupported filter(s): {sorted(ctx.filters)}"
+            )
+        payloads = _trial_payloads(ctx)
+        if not payloads:
+            return error_result(
+                ctx,
+                self.source,
+                start,
+                "retrieve_interventions needs trial records from retrieve_clinical_trials",
+            )
+
+        trials: dict[str, dict] = {}
+        truncated = False
+        for payload in payloads:
+            truncated = truncated or bool(payload.get("truncated"))
+            for label, query in payload["queries"].items():
+                for trial in query["items"]:
+                    nct_id = trial.get("nct_id")
+                    if not nct_id:
+                        continue
+                    entry = trials.get(nct_id)
+                    if entry is None:
+                        arms = _combination_arms(trial)
+                        trials[nct_id] = {
+                            "nct_id": nct_id,
+                            "title": trial.get("title"),
+                            "status": trial.get("status"),
+                            "phases": trial.get("phases") or [],
+                            "interventions": _intervention_roles(trial),
+                            "combination_arms": arms or [],
+                            "is_combination": None if arms is None else bool(arms),
+                            "query_labels": [label],
+                        }
+                    elif label not in entry["query_labels"]:
+                        entry["query_labels"].append(label)
+
+        rows = list(trials.values())
+        if not rows:
+            status = "no_records"
+        elif truncated:
+            status = "partial_truncated"
+        else:
+            status = "success"
+
+        return StepResult(
+            step_id=ctx.step_id,
+            operation=ctx.operation,
+            status=status,
+            source=self.source,
+            payload={
+                "trial_count": len(rows),
+                "trials": rows,
+                "truncated": truncated,
+                "limitations": [
+                    "Interventions come from the retrieved ClinicalTrials.gov records only; "
+                    "trials that were truncated or not retrieved are not covered.",
+                    "role is derived from the recorded arm group types; it is "
+                    "'unspecified' when the record links no arm. is_combination is null "
+                    "when no arm information is recorded.",
+                ],
+            },
+            total_count=len(rows),
+            fetched_count=len(rows),
+            truncated=truncated,
+            elapsed_seconds=time.monotonic() - start,
+        )

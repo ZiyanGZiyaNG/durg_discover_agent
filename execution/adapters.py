@@ -71,8 +71,14 @@ from execution.common import (
 
 from execution.external_source_adapters import (
     RetrieveClinicalTrialsAdapter,
+    RetrieveInterventionsAdapter,
     RetrieveNegativePublicationsAdapter,
     RetrieveTrialStatusAndStopReasonsAdapter,
+)
+
+from execution.trial_analysis_adapters import (
+    AggregateCategoryDistributionAdapter,
+    RankMechanismCategoriesAdapter,
 )
 
 class ResolveEntityAdapter:
@@ -840,4 +846,7 @@ ADAPTERS: dict[str, Adapter] = {
     "retrieve_clinical_trials": RetrieveClinicalTrialsAdapter(),
     "retrieve_trial_status_and_stop_reasons": RetrieveTrialStatusAndStopReasonsAdapter(),
     "retrieve_negative_publications": RetrieveNegativePublicationsAdapter(),
+    "retrieve_interventions": RetrieveInterventionsAdapter(),
+    "aggregate_category_distribution": AggregateCategoryDistributionAdapter(),
+    "rank_mechanism_categories": RankMechanismCategoriesAdapter(),
 }

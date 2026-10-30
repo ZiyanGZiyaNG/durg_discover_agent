@@ -718,6 +718,7 @@ class ClinicalTrialRecord(BaseModel):
     interventions: list[dict] = []
     sponsor: str | None = None
     url: str | None = None
+    arm_groups: list[dict] = []
 
 
 class ClinicalTrialQuery(BaseModel):
@@ -772,6 +773,53 @@ class LiteratureEvidence(BaseModel):
     queries: dict[str, LiteratureQuery]
     failed_queries: dict[str, str]
     truncated: bool
+    limitations: list[str]
+
+class InterventionItem(BaseModel):
+    name: str | None = None
+    type: str | None = None
+    role: str
+    arm_group_labels: list[str] = []
+
+
+class InterventionTrial(BaseModel):
+    nct_id: str
+    title: str | None = None
+    status: str | None = None
+    phases: list[str] = []
+    interventions: list[InterventionItem]
+    combination_arms: list[str] = []
+    is_combination: bool | None = None
+    query_labels: list[str]
+
+
+class InterventionEvidence(BaseModel):
+    trial_count: int
+    trials: list[InterventionTrial]
+    truncated: bool
+    limitations: list[str]
+
+
+class CategoryCount(BaseModel):
+    category: str
+    category_count: int
+    category_fraction: float
+
+
+class CategoryDistribution(BaseModel):
+    source_row_count: int
+    metrics: list[str]
+    distributions: dict[str, list[CategoryCount]]
+    limitations: list[str]
+
+
+class RankedCategory(CategoryCount):
+    rank: int
+
+
+class RankedCategories(BaseModel):
+    ranked_by: str
+    rankings: dict[str, list[RankedCategory]]
     limitations: list[str]
 
 
@@ -835,4 +883,7 @@ OUTPUT_MODELS: dict[str, type[BaseModel]] = {
     "retrieve_clinical_trials": ClinicalTrialEvidence,
     "retrieve_trial_status_and_stop_reasons": ClinicalTrialEvidence, 
     "retrieve_negative_publications": LiteratureEvidence,
+    "retrieve_interventions": InterventionEvidence,
+    "aggregate_category_distribution": CategoryDistribution,
+    "rank_mechanism_categories": RankedCategories,
 }
