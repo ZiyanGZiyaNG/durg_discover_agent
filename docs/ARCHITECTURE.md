@@ -29,10 +29,10 @@ The Natural-language Planner has no retrieval tools. It creates a plan and Pytho
 | Acceptance | `planner_acceptance.py` | Implemented |
 | Open Targets retrieval | `query_opentargets.py` | Partial |
 | ChEMBL retrieval | `query_chembl.py` | Partial/legacy |
-| Europe PMC adapter | — | Not production-ready |
-| ClinicalTrials.gov adapter | — | Not production-ready |
+| Europe PMC adapter | `query_europepmc.py`, `execution/external_source_adapters.py` | Implemented and live-tested; offline tests still to be written |
+| ClinicalTrials.gov adapter | `query_clinicaltrials.py`, `execution/external_source_adapters.py` | Implemented and live-tested; offline tests still to be written |
 | Validation/review | `expert_review.py`, `evidence_pipeline.py` | Partial |
-| V2 execution compiler | 2026-10-29 | Partial: pre-execution checks, compile/dry-run and execution trace done; adapters 29/64 |
+| V2 execution compiler | 2026-10-31 | Done: pre-execution checks, compile/dry-run, execution trace and adapters for all 64 operations; the Planner does not yet emit `inputs` references |
 | Stage 1 handoff | schemas in progress | Not finalized |
 
 ## Execution policy

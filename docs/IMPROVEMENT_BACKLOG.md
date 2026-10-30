@@ -10,7 +10,7 @@
 
 ## P1 — Close the Plan-to-evidence loop
 
-- Implement the QueryManifestV2 execution compiler.
+- Done (2026-10-31): the QueryManifestV2 execution compiler (`execution/`) with adapters for all 64 operations.
 - Extend operation contracts with executor, schemas, prerequisites, limits, retry, timeout, and cache metadata.
 - Implement one adapter interface for all four sources.
 - Define bounded collection and completion statuses.

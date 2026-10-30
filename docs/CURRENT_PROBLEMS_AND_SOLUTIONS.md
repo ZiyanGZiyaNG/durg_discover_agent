@@ -2,9 +2,9 @@
 
 ## 1. Natural-language plans are only partly executable
 
-**Current state:** An execution compiler now exists (`execution/`). Approved plans are checked before any retrieval (operation approved, adapter exists, filter/ranking fields exist, required data is provided by an earlier step), compiled to an ordered tool-call list (`python -m execution PLAN.json --dry-run`), and run with typed output. Entity resolution and step-to-step data flow work. Adapters cover 54 of 64 operations; 15 of 18 acceptance cases have every required operation implemented. The Planner does not yet emit `inputs` references.
+**Current state:** An execution compiler now exists (`execution/`). Approved plans are checked before any retrieval (operation approved, adapter exists, filter/ranking fields exist, required data is provided by an earlier step), compiled to an ordered tool-call list (`python -m execution PLAN.json --dry-run`), and run with typed output. Entity resolution and step-to-step data flow work. Adapters cover all 64 operations, and all 18 acceptance cases have every required operation implemented (a static check that adapters exist, not proof that the Planner produces a runnable plan). The Planner does not yet emit `inputs` references.
 
-**Solution:** Add adapters for the remaining operations by capability (generic, not drug- or disease-specific), and update Planner examples to emit `inputs`.
+**Solution:** Add adapters by capability, only when the Planner proposes an operation that needs one (generic, not drug- or disease-specific), and update the Planner examples to emit `inputs` references.
 
 **Done when:** Every acceptance case compiles to tool calls or is refused with a clear reason, and the adapter set covers the operations the Planner actually proposes.
 

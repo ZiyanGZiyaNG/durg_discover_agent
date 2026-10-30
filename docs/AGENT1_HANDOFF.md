@@ -28,8 +28,8 @@ Offline baseline on 2026-09-15: **150 tests passed**.
 
 ### Designed but incomplete
 
-- QueryManifestV2-to-tool execution compiler.
-- Production-ready Europe PMC, ClinicalTrials.gov, and ChEMBL adapters.
+- Planner support for the execution compiler: the compiler and adapters for all 64 operations exist, but the Planner does not yet emit `inputs` references.
+- Offline tests for the Europe PMC and ClinicalTrials.gov query modules, and a production-ready ChEMBL adapter (`query_chembl.py` is partial/legacy).
 - Per-source bounded collection policies.
 - Final `Stage1EvidencePackage`.
 - Agent 2 `EvidenceRequest` supplemental retrieval.
