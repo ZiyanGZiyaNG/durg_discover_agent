@@ -313,8 +313,8 @@ description without changing code or acceptance data.
 The reversible `plan-query-staged` experiment avoids asking one model call to
 both design the research and recall the whole operation table. Stage 1 produces
 atomic evidence/analysis needs without operation names. Python searches the
-complete authoritative table and supplies at most five candidates per need to
-Stage 2, which must choose a canonical candidate or propose a new operation for
+complete authoritative table and supplies at most ten candidates per need
+(`PLANNER_SHORTLIST_SIZE`, default 10) to Stage 2, which must choose a canonical candidate or propose a new operation for
 human review. Python then compiles `QueryManifestV2` and runs the same hidden
 acceptance checks. The original `plan-query` path remains available unchanged.
 

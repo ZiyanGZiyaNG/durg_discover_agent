@@ -229,6 +229,18 @@ def _name_coverage_ranking(query: str) -> list[str]:
     return [canonical for _, canonical in sorted(scored)]
 
 
+DEFAULT_SHORTLIST_SIZE = 10
+
+
+def _shortlist_size() -> int:
+    """Candidates sent to the mapper per need; PLANNER_SHORTLIST_SIZE overrides."""
+    try:
+        size = int(os.getenv("PLANNER_SHORTLIST_SIZE", DEFAULT_SHORTLIST_SIZE))
+    except ValueError:
+        size = DEFAULT_SHORTLIST_SIZE
+    return max(1, min(size, len(OPERATION_TABLE)))
+
+
 def operation_candidates(
     search_query: str, limit: int = 5, need_id: str = ""
 ) -> list[str]:
@@ -573,7 +585,9 @@ class StagedNaturalLanguagePlanner:
             corrected.extend(_normalize_unverified_entities(strategy))
             candidates = {
                 need.need_id: operation_candidates(
-                    need.operation_search_query, need_id=need.need_id
+                    need.operation_search_query,
+                    limit=_shortlist_size(),
+                    need_id=need.need_id,
                 )
                 for need in strategy.needs
             }

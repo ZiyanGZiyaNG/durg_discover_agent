@@ -959,3 +959,27 @@ The target-translation layer rule is still provisional and awaits research-team 
 `compile_manifest` now fills `inputs` from `depends_on`: one reference per upstream step, pointing at its first declared output. The staged Planner output for `pdac_known_targets` compiles and runs end to end through `run_plan` (six steps, all `success`). Replaying older saved plans with derived `inputs` compiled 7 and refused 7; every refusal came from existing plan checks (unknown legacy operation names, ranking metrics no upstream step produces), none from `inputs`. Only one acceptance case has been run end to end so far.
 
 The full suite passes 367 tests with no failures.
+
+
+## Staged Planner: shortlist, program-side completion and a five-case check (2026-11-05)
+
+Changes, all in `plan-query-staged` and the execution CLI:
+
+- `compile_manifest` fills each step's `inputs` from `depends_on`, so data passes along the declared dependency edges instead of being found by scanning the board. The staged output for `pdac_known_targets` compiles and runs through `run_plan` (six steps, all `success`).
+- `python -m execution PLAN.json --entity REF=ID` supplies an entity ID without name resolution (repeatable; `--disease-id` is kept). Chinese mentions are not found by Open Targets search, and ambiguous English mentions ("pancreatic cancer", "PDAC") are refused rather than guessed, so a plan with such mentions needs an explicit ID.
+- The operation shortlist is scored by stemmed, IDF-weighted name coverage interleaved with the previous token score, and holds 10 candidates (`PLANNER_SHORTLIST_SIZE`, default 10; it was 5). Offline, 9 of 10 known needs reach the top 10 (6 of 10 reached the top 5). Six of those ten needs are the KRAS case the scoring was tuned on; the four others reach the top 5 in 0 cases and the top 10 in 3. `retrieve_drug_targets` for an olaparib need ranks 14th and is still missed.
+- `complete_plan_from_table` adds, from `OPERATION_TABLE` only, a resolver step when a step requires `resolved_<type>` that nothing upstream provides, and the safeguards the table lists as required for each operation. Every addition is written to `program_completions` in the report. It does not infer entities for steps whose `entity_refs` are empty, and it adds no retrieval, comparison or ranking steps.
+
+Five development cases were run once each with the real model (`outputs/plans/matrix_staged_*`). Before these changes four ended in `pending_human_review` and one failed acceptance; in the latest valid run none passed, one is in `pending_human_review` and four failed hidden acceptance. Runs differ in how many needs the model produces, so matched counts are not directly comparable. Three runs of the second batch failed with `OpenAIConnectionError` and were repeated.
+
+| Case | Before | Latest valid run | Remaining gap |
+| --- | --- | --- | --- |
+| kras_variant_drugs | review, 4/5 matched | failed, 7/7 matched | no `target_variant` filter or `group_by_variant` aggregation |
+| olaparib_targets_indications | review, 4/5 matched | failed, 5/5 matched | used `retrieve_mechanisms`, not `retrieve_drug_targets` |
+| pdac_drugs_other_cancers | review, 2/4 matched | failed, 4/4 matched | different path (drug, target, associated disease, stratify) that skips the cross-indication operations |
+| cldn182_pdac_evidence_types | review, 2/5 matched | review, 3/5 matched | proposes `count_literature_co_occurrence` and `retrieve_differential_expression` |
+| pdac_score_tractability_filter | failed | failed (identical in two runs) | ranking folded into the filter step; filter keys differ from the contract |
+
+For research-team decision, not for the Planner to settle: whether the table needs literature co-occurrence and disease-specific expression operations (both runs of the CLDN18.2 case proposed them); whether `retrieve_mechanisms` is an accepted alternative to `retrieve_drug_targets`; and whether ranking inside a filter step is acceptable or must be a separate `rank_targets` step.
+
+The staged route still has no repair loop and does not run the general operation rules, so a plan that fails acceptance is reported, not repaired. `kras_associated_diseases` is an `internal_holdout` case whose rubric and failures were inspected while tuning, so it no longer works as a clean holdout.

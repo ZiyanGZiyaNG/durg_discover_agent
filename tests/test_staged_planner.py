@@ -2,7 +2,9 @@ import json
 
 from planner_acceptance import load_acceptance_cases
 from staged_planner import (
+    DEFAULT_SHORTLIST_SIZE,
     StagedNaturalLanguagePlanner,
+    _shortlist_size,
     operation_candidates,
 )
 
@@ -172,7 +174,10 @@ def test_staged_planner_compiles_and_passes_hidden_case(tmp_path):
     assert report.final_plan.original_question == case.question
     assert report.executed_retrieval_tools == []
     request = json.loads(mapping_agent.calls[0]["messages"][0]["content"])
-    assert len(request["atomic_needs_with_candidates"][0]["candidates"]) == 5
+    assert (
+        len(request["atomic_needs_with_candidates"][0]["candidates"])
+        == DEFAULT_SHORTLIST_SIZE
+    )
     assert json.loads(checkpoint.read_text(encoding="utf-8"))["status"] == "passed"
 
 
@@ -308,3 +313,14 @@ def test_table_required_safeguards_are_added_and_recorded():
         required = set(OPERATION_TABLE[step.operation].required_safeguards)
         assert required <= set(step.safeguards) | set(plan.global_safeguards), step.step_id
     assert any("table-required safeguards" in note for note in report.program_completions)
+
+
+def test_shortlist_size_defaults_to_ten_and_can_be_overridden(monkeypatch):
+    monkeypatch.delenv("PLANNER_SHORTLIST_SIZE", raising=False)
+    assert _shortlist_size() == DEFAULT_SHORTLIST_SIZE == 10
+    monkeypatch.setenv("PLANNER_SHORTLIST_SIZE", "5")
+    assert _shortlist_size() == 5
+    monkeypatch.setenv("PLANNER_SHORTLIST_SIZE", "not-a-number")
+    assert _shortlist_size() == DEFAULT_SHORTLIST_SIZE
+    monkeypatch.setenv("PLANNER_SHORTLIST_SIZE", "0")
+    assert _shortlist_size() == 1
