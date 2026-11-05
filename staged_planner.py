@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
+from functools import lru_cache
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Literal
@@ -184,20 +186,44 @@ def _stem_tokens(text: str) -> set[str]:
     }
 
 
+@lru_cache(maxsize=1)
+def _token_weights() -> dict[str, float]:
+    """Inverse-document-frequency weight for each stemmed operation-name token.
+
+    Tokens shared by many operations (disease, target) carry little signal;
+    rarer tokens (association, rank) carry more.
+    """
+    frequency: dict[str, int] = {}
+    for canonical, entry in OPERATION_TABLE.items():
+        names = [canonical, *entry.equivalent_operations]
+        for token in set().union(*(_stem_tokens(name) for name in names)):
+            frequency[token] = frequency.get(token, 0) + 1
+    total = len(OPERATION_TABLE)
+    return {
+        token: math.log((total + 1) / (count + 1)) + 1
+        for token, count in frequency.items()
+    }
+
+
 def _name_coverage_ranking(query: str) -> list[str]:
-    """Rank operations by how much of their own name the query covers.
+    """Rank operations by the weighted share of their own name the query covers.
 
     The denominator is the operation name, so a long query full of entity and
-    database names does not dilute the match.
+    database names does not dilute the match, and common name tokens count
+    for less than distinctive ones.
     """
+    weights = _token_weights()
     query_tokens = _stem_tokens(query)
     scored: list[tuple[float, str]] = []
     for canonical, entry in OPERATION_TABLE.items():
         best = 0.0
         for name in [canonical, *entry.equivalent_operations]:
             name_tokens = _stem_tokens(name)
-            hits = len(query_tokens & name_tokens)
-            best = max(best, hits / max(1, len(name_tokens)) * 10 + hits)
+            total = sum(weights.get(token, 1.0) for token in name_tokens) or 1.0
+            matched = sum(
+                weights.get(token, 1.0) for token in name_tokens & query_tokens
+            )
+            best = max(best, matched / total * 10 + matched)
         scored.append((-best, canonical))
     return [canonical for _, canonical in sorted(scored)]
 

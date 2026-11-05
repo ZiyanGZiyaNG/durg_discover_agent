@@ -229,3 +229,32 @@ def test_compiled_steps_reference_upstream_outputs_as_inputs():
         for ref in step.inputs.values():
             assert ref.step_id in step.depends_on
             assert ref.output in steps[ref.step_id].outputs
+
+
+def test_shortlist_keeps_reviewed_operations_for_kras_needs():
+    """Replay of real staged queries whose reviewed operation once missed the top 5."""
+    cases = [
+        (
+            "resolve_kras_entity",
+            "KRAS human gene target canonical identifier Open Targets ChEMBL",
+            "resolve_target",
+        ),
+        (
+            "retrieve_kras_disease_associations",
+            "KRAS disease association Open Targets evidence score data types disease ID",
+            "retrieve_associated_diseases",
+        ),
+        (
+            "rank_kras_disease_associations",
+            "rank KRAS disease associations by association score evidence count "
+            "evidence type diversity",
+            "rank_diseases",
+        ),
+        (
+            "kras_disease_evidence",
+            "Open Targets KRAS target disease associations evidence strength score",
+            "retrieve_associated_diseases",
+        ),
+    ]
+    for need_id, query, expected in cases:
+        assert expected in operation_candidates(query, need_id=need_id), need_id
