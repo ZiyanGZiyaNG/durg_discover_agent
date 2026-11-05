@@ -151,6 +151,7 @@ class StagedPlannerReport(BaseModel):
     total_duration_seconds: float
     errors: list[str] = Field(default_factory=list)
     corrected_model_claims: list[str] = Field(default_factory=list)
+    program_completions: list[str] = Field(default_factory=list)
     timeout_cleanup: dict[str, Any] = Field(default_factory=dict)
     evidence_collection_started: Literal[False] = False
     executed_retrieval_tools: list[str] = Field(default_factory=list)
@@ -306,11 +307,110 @@ def _derive_inputs(
 
 
 
+def _resolver_operation(capability: str) -> tuple[str, str] | None:
+    """Map a ``resolved_<type>`` capability to its single-entity resolver."""
+    if not capability.startswith("resolved_"):
+        return None
+    entity_type = capability.removeprefix("resolved_")
+    operation = f"resolve_{entity_type}"
+    entry = OPERATION_TABLE.get(operation)
+    if entry is None or capability not in entry.provides:
+        return None
+    return operation, entity_type
+
+
+def complete_plan_from_table(
+    steps: list[ResearchPlanStepV2],
+    entities: list[PlannedEntityV2],
+    global_safeguards: list[str],
+    notes: list[str],
+) -> list[ResearchPlanStepV2]:
+    """Fill gaps that the operation table itself defines; add no research content.
+
+    Two completions, both derived only from OPERATION_TABLE and both recorded
+    in ``notes``:
+    - a resolver step for an entity whose resolved form a step requires;
+    - safeguards the table lists as required for the step's operation.
+    """
+    entity_types = {entity.entity_ref: entity.entity_type for entity in entities}
+    mentions = {entity.entity_ref: entity.mention for entity in entities}
+    taken_ids = {step.step_id for step in steps}
+    taken_outputs = {output for step in steps for output in step.outputs}
+    resolver_for: dict[str, str] = {}
+    for step in steps:
+        if step.operation.startswith("resolve_"):
+            for ref in step.entity_refs:
+                resolver_for.setdefault(ref, step.step_id)
+
+    provided: set[str] = set()
+    inserted: list[ResearchPlanStepV2] = []
+    for step in steps:
+        entry = OPERATION_TABLE.get(step.operation)
+        if step.operation_status != "approved" or entry is None:
+            continue
+        needed = [cap for cap in entry.requires_all if cap not in provided]
+        if entry.requires_any and not any(cap in provided for cap in entry.requires_any):
+            needed.append(next(
+                (cap for cap in entry.requires_any if _resolver_operation(cap)),
+                entry.requires_any[0],
+            ))
+        for capability in needed:
+            resolver = _resolver_operation(capability)
+            if resolver is None:
+                continue
+            operation, entity_type = resolver
+            for ref in step.entity_refs:
+                if entity_types.get(ref) != entity_type:
+                    continue
+                if ref not in resolver_for:
+                    slug = re.sub(r"[^a-z0-9]+", "_", ref.casefold()).strip("_") or "entity"
+                    step_id, output = f"step_resolve_{slug}", f"resolved_{slug}"
+                    while step_id in taken_ids:
+                        step_id += "_x"
+                    while output in taken_outputs:
+                        output += "_x"
+                    new_step = ResearchPlanStepV2(
+                        step_id=step_id,
+                        operation=operation,
+                        description=f"解析 {mentions[ref]} 為標準識別碼（依操作表前置條件由程式補入）",
+                        entity_refs=[ref],
+                        sources=["open_targets"],
+                        outputs=[output],
+                    )
+                    inserted.append(new_step)
+                    taken_ids.add(step_id)
+                    taken_outputs.add(output)
+                    resolver_for[ref] = step_id
+                    provided.update(OPERATION_TABLE[operation].provides)
+                    notes.append(
+                        f"inserted {step_id} ({operation}) for {ref}: "
+                        f"{step.step_id} ({step.operation}) requires {capability}"
+                    )
+                if resolver_for[ref] not in step.depends_on:
+                    step.depends_on.append(resolver_for[ref])
+        provided.update(entry.provides)
+
+    for step in [*inserted, *steps]:
+        entry = OPERATION_TABLE.get(step.operation)
+        if step.operation_status != "approved" or entry is None:
+            continue
+        absent = [
+            safeguard
+            for safeguard in entry.required_safeguards
+            if safeguard not in step.safeguards and safeguard not in global_safeguards
+        ]
+        if absent:
+            step.safeguards = [*step.safeguards, *absent]
+            notes.append(f"{step.step_id}: added table-required safeguards {absent}")
+    return [*inserted, *steps]
+
+
 def compile_manifest(
     question: str,
     strategy: ResearchStrategyDraft,
     mapping: OperationMappingResult,
     candidates: dict[str, list[str]],
+    completions: list[str] | None = None,
 ) -> QueryManifestV2:
     matches = {match.need_id: match for match in mapping.matches}
     expected_ids = {need.need_id for need in strategy.needs}
@@ -355,6 +455,16 @@ def compile_manifest(
         )
         steps.append(step)
         steps_by_id[step.step_id] = step
+
+    steps = complete_plan_from_table(
+        steps,
+        strategy.entities,
+        strategy.global_safeguards,
+        completions if completions is not None else [],
+    )
+    steps_by_id = {step.step_id: step for step in steps}
+    for step in steps:
+        step.inputs = _derive_inputs(step.depends_on, steps_by_id)
 
     return QueryManifestV2(
         manifest_id=uuid4(),
@@ -415,6 +525,7 @@ class StagedNaturalLanguagePlanner:
         acceptance = None
         candidates: dict[str, list[str]] = {}
         corrected: list[str] = []
+        completions: list[str] = []
         strategy_duration = None
         mapping_duration = None
         timeout = float(os.getenv("PLANNER_ATTEMPT_TIMEOUT_SECONDS", "1200"))
@@ -436,6 +547,7 @@ class StagedNaturalLanguagePlanner:
                 total_duration_seconds=perf_counter() - started,
                 errors=errors,
                 corrected_model_claims=corrected,
+                program_completions=completions,
                 timeout_cleanup=cleanup,
                 generated_at=datetime.now(timezone.utc),
             )
@@ -489,7 +601,9 @@ class StagedNaturalLanguagePlanner:
                 payload.model_dump() if hasattr(payload, "model_dump") else payload
             )
             finish("running")
-            plan = compile_manifest(question, strategy, mapping, candidates)
+            plan = compile_manifest(
+                question, strategy, mapping, candidates, completions
+            )
             proposed = [
                 step.proposed_operation_name
                 for step in plan.plan_steps

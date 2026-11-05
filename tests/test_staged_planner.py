@@ -258,3 +258,53 @@ def test_shortlist_keeps_reviewed_operations_for_kras_needs():
     ]
     for need_id, query, expected in cases:
         assert expected in operation_candidates(query, need_id=need_id), need_id
+
+
+def _without_resolver():
+    strategy = _strategy()
+    strategy["needs"] = [n for n in strategy["needs"] if n["need_id"] != "resolve"]
+    for need in strategy["needs"]:
+        need["depends_on"] = [d for d in need["depends_on"] if d != "resolve"]
+    mapping = _mapping()
+    mapping["matches"] = [m for m in mapping["matches"] if m["need_id"] != "resolve"]
+    return strategy, mapping
+
+
+def test_missing_resolver_is_inserted_from_operation_table():
+    strategy, mapping = _without_resolver()
+    report = StagedNaturalLanguagePlanner(
+        FakeAgent(strategy), FakeAgent(mapping)
+    ).run_with_report(_case().question)
+
+    assert report.status == "passed"
+    steps = {step.step_id: step for step in report.final_plan.plan_steps}
+    resolver = report.final_plan.plan_steps[0]
+    assert resolver.operation == "resolve_disease"
+    assert resolver.entity_refs == ["disease_1"]
+    discover = steps["step_discover"]
+    assert resolver.step_id in discover.depends_on
+    assert resolver.step_id in discover.inputs
+    assert any(note.startswith("inserted") for note in report.program_completions)
+
+
+def test_existing_resolver_is_not_duplicated():
+    report = StagedNaturalLanguagePlanner(
+        FakeAgent(_strategy()), FakeAgent(_mapping())
+    ).run_with_report(_case().question)
+
+    assert report.final_plan.plan_steps[0].step_id == "step_resolve"
+    assert not any(note.startswith("inserted") for note in report.program_completions)
+
+
+def test_table_required_safeguards_are_added_and_recorded():
+    from planner_acceptance import OPERATION_TABLE
+
+    report = StagedNaturalLanguagePlanner(
+        FakeAgent(_strategy()), FakeAgent(_mapping())
+    ).run_with_report(_case().question)
+
+    plan = report.final_plan
+    for step in plan.plan_steps:
+        required = set(OPERATION_TABLE[step.operation].required_safeguards)
+        assert required <= set(step.safeguards) | set(plan.global_safeguards), step.step_id
+    assert any("table-required safeguards" in note for note in report.program_completions)
