@@ -26,6 +26,13 @@ def main(argv: list[str] | None = None) -> int:
         "--disease-id",
         help="use this ID for the disease entity instead of resolving its name",
     )
+    parser.add_argument(
+        "--entity",
+        action="append",
+        default=[],
+        metavar="REF=ID",
+        help="use this ID for one plan entity, e.g. entity_1=MONDO_0005184(repeatable)",
+    )
 
     parser.add_argument(
     "--dry-run",
@@ -40,6 +47,14 @@ def main(argv: list[str] | None = None) -> int:
         for entity in plan.entities:
             if entity.entity_type == "disease":
                 entity.entity_id = args.disease_id
+    by_ref = {entity.entity_ref: entity for entity in plan.entities}
+    for item in args.entity:
+        ref, sep, entity_id = item.partition("=")
+        if not sep or not entity_id or ref not in by_ref:
+            parser.error(
+                f"--entity expects REF=ID with REF in {sorted(by_ref)}; got {item!r}"
+            )
+            by_ref[ref].entity_id = entity_id
 
 
     if args.dry_run:
@@ -61,11 +76,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     print(args.plan.name)
-    print(f"{'step':<36}{'operation':<36}{'status':<16}{'sec':>5}")
+    print(f"{'step':<36}{'operation':<36}{'status':<18}{'sec':>5}")
     for result in trace:
         print(
             f"{result.step_id:<36}{result.operation:<36}"
-            f"{result.status:<16}{result.elapsed_seconds:>5.1f}"
+            f"{result.status:<18}{result.elapsed_seconds:>5.1f}"
         )
     print(f"total {sum(r.elapsed_seconds for r in trace):.1f} s")
 
