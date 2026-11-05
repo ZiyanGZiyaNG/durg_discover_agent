@@ -203,3 +203,29 @@ def test_no_equivalent_operation_is_held_for_human_review():
     assert report.status == "pending_human_review"
     assert report.final_plan is None
     assert report.executed_retrieval_tools == []
+
+
+def test_compiled_steps_reference_upstream_outputs_as_inputs():
+    case = _case()
+    report = StagedNaturalLanguagePlanner(
+        FakeAgent(_strategy()), FakeAgent(_mapping())
+    ).run_with_report(case.question)
+
+    steps = {step.step_id: step for step in report.final_plan.plan_steps}
+    assert steps["step_resolve"].inputs == {}
+
+    # One reference per dependency, pointing at that step's first output.
+    stratify = steps["step_stratify"]
+    assert set(stratify.inputs) == {"step_drugs", "step_tractability"}
+    assert stratify.inputs["step_drugs"].step_id == "step_drugs"
+    assert stratify.inputs["step_drugs"].output == "target_drug_evidence"
+    assert (
+        stratify.inputs["step_tractability"].output
+        == "target_tractability_evidence"
+    )
+
+    # Every reference must resolve to an existing output of a prior step.
+    for step in steps.values():
+        for ref in step.inputs.values():
+            assert ref.step_id in step.depends_on
+            assert ref.output in steps[ref.step_id].outputs

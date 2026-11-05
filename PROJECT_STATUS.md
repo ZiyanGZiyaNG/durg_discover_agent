@@ -900,7 +900,7 @@ steps in 19.2 seconds and produced a ten-target ranking.
 **Coverage is complete.** Every operation in `OPERATION_TABLE` has an adapter and an output model, so any approved plan can be compiled and executed (`set(OPERATION_TABLE) == set(ADAPTERS) == set(OUTPUT_MODELS)`).
 
 - Verified end to end through `run_plan` on `outputs/plans/test_trials_literature_v1.json` (KRAS in pancreatic cancer): trials, stop reasons, termination classification, failed programs, category distribution, ranking, interventions and negative publications. The mechanism chain (`retrieve_mechanisms`, `classify_mechanism_categories`, distribution, ranking) and the Phase 2 chain (`retrieve_target_drugs`, `retrieve_clinical_stage`, `retrieve_approved_indications`, `filter_phase2_not_approved_for_disease`) also ran end to end on `outputs/plans/test_mechanism_phase2_v1.json` (KRAS).
-- All 18 acceptance cases in `tests/fixtures/planner_acceptance_cases.json` have an adapter for every required operation. This is a static check that adapters exist; it does not show that the Planner produces a runnable plan, and the Planner does not yet emit `inputs` references.
+- All 18 acceptance cases in `tests/fixtures/planner_acceptance_cases.json` have an adapter for every required operation. This is a static check that adapters exist; it does not show that the Planner produces a runnable plan for each case.
 - New source modules: `source_http.py` (timeout, retry, `SourceError`), `query_clinicaltrials.py` and `query_europepmc.py`, with LangChain wrappers in `tools/`.
 - ClinicalTrials.gov and Europe PMC are searched with the canonical disease name OR the user's own wording (plain English only), because the ontology name alone can miss most records (1 trial for "exocrine pancreatic carcinoma" versus 191 for "pancreatic cancer"). The exact search string is kept in each query's provenance.
 - Steps with `source: local_analysis` that run on truncated upstream data are reported as `partial_truncated` with a limitation naming the upstream step. An empty upstream table gives `no_records`; a table whose rows lack the requested field is still an `error`.
@@ -954,6 +954,8 @@ never merged across groups; expression is not toxicity. The integration step
 lists safety events, terminations and expression side by side and matches tissues
 by tissue id only, without drawing a risk conclusion.
 
-The Planner does not yet emit `inputs` references.
-The full suite passes 356 tests with no failures. The target-translation layer
-rule is still provisional and awaits research-team approval.
+The target-translation layer rule is still provisional and awaits research-team approval.
+
+`compile_manifest` now fills `inputs` from `depends_on`: one reference per upstream step, pointing at its first declared output. The staged Planner output for `pdac_known_targets` compiles and runs end to end through `run_plan` (six steps, all `success`). Replaying older saved plans with derived `inputs` compiled 7 and refused 7; every refusal came from existing plan checks (unknown legacy operation names, ranking metrics no upstream step produces), none from `inputs`. Only one acceptance case has been run end to end so far.
+
+The full suite passes 367 tests with no failures.

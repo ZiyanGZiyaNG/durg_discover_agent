@@ -35,6 +35,7 @@ from schemas import (
     QueryManifestV2,
     RankingSpecV2,
     ResearchPlanStepV2,
+    StepInputRef,
 )
 
 
@@ -209,6 +210,23 @@ def build_mapping_request(
         )
     return {"atomic_needs_with_candidates": needs}
 
+def _derive_inputs(
+    depends_on: list[str], steps_by_id: dict[str, ResearchPlanStepV2]
+) -> dict[str, StepInputRef]:
+    """Reference the first declared output of every upstream step.
+
+    The runtime board stores one payload under every output name of a step,
+    so the first output is always a valid reference.
+    """
+    inputs: dict[str, StepInputRef] = {}
+    for step_id in depends_on:
+        upstream = steps_by_id[step_id]
+        inputs[step_id] = StepInputRef(
+            step_id=step_id, output=upstream.outputs[0]
+        )
+    return inputs
+
+
 
 def compile_manifest(
     question: str,
@@ -222,6 +240,7 @@ def compile_manifest(
         raise ValueError("mapping must contain every need_id exactly once")
 
     steps = []
+    steps_by_id: dict[str, ResearchPlanStepV2] = {}
     for need in strategy.needs:
         match = matches[need.need_id]
         if match.match_status == "matched":
@@ -238,24 +257,27 @@ def compile_manifest(
             operation_status = "proposed"
             proposed_name = match.proposed_operation_name
             proposal_reason = match.proposal_reason
-        steps.append(
-            ResearchPlanStepV2(
-                step_id=f"step_{need.need_id}",
-                operation=operation,
-                operation_status=operation_status,
-                proposed_operation_name=proposed_name,
-                proposal_reason=proposal_reason,
-                description=need.purpose,
-                depends_on=[f"step_{item}" for item in need.depends_on],
-                entity_refs=need.entity_refs,
-                sources=need.sources,
-                outputs=need.outputs,
-                filters=need.filters,
-                ranking=need.ranking,
-                aggregation=need.aggregation,
-                safeguards=need.safeguards,
-            )
+        step_depends_on = [f"step_{item}" for item in need.depends_on]
+        step = ResearchPlanStepV2(
+            step_id=f"step_{need.need_id}",
+            operation=operation,
+            operation_status=operation_status,
+            proposed_operation_name=proposed_name,
+            proposal_reason=proposal_reason,
+            description=need.purpose,
+            depends_on=step_depends_on,
+            entity_refs=need.entity_refs,
+            sources=need.sources,
+            outputs=need.outputs,
+            filters=need.filters,
+            ranking=need.ranking,
+            aggregation=need.aggregation,
+            safeguards=need.safeguards,
+            inputs=_derive_inputs(step_depends_on, steps_by_id),
         )
+        steps.append(step)
+        steps_by_id[step.step_id] = step
+
     return QueryManifestV2(
         manifest_id=uuid4(),
         original_question=question,
