@@ -163,9 +163,54 @@ def _search_tokens(text: str) -> set[str]:
     }
 
 
-def operation_candidates(search_query: str, limit: int = 5) -> list[str]:
-    """Return a deterministic shortlist without deciding the final match."""
+_STOP_WORDS = {"and", "for", "the", "per", "by", "of", "in", "on", "to", "with", "as", "or"}
+_SUFFIXES = ("ations", "ation", "ated", "ates", "ate", "ings", "ing", "ies", "ed", "es", "s")
 
+
+def _stem(token: str) -> str:
+    """Crude stemming so disease/diseases and association/associated match."""
+    for suffix in _SUFFIXES:
+        if token.endswith(suffix) and len(token) - len(suffix) >= 3:
+            token = token[: -len(suffix)]
+            break
+    return token[:-1] if token.endswith("e") and len(token) > 3 else token
+
+
+def _stem_tokens(text: str) -> set[str]:
+    return {
+        _stem(token)
+        for token in re.findall(r"[a-z0-9]+", text.casefold())
+        if len(token) > 1 and token not in _STOP_WORDS
+    }
+
+
+def _name_coverage_ranking(query: str) -> list[str]:
+    """Rank operations by how much of their own name the query covers.
+
+    The denominator is the operation name, so a long query full of entity and
+    database names does not dilute the match.
+    """
+    query_tokens = _stem_tokens(query)
+    scored: list[tuple[float, str]] = []
+    for canonical, entry in OPERATION_TABLE.items():
+        best = 0.0
+        for name in [canonical, *entry.equivalent_operations]:
+            name_tokens = _stem_tokens(name)
+            hits = len(query_tokens & name_tokens)
+            best = max(best, hits / max(1, len(name_tokens)) * 10 + hits)
+        scored.append((-best, canonical))
+    return [canonical for _, canonical in sorted(scored)]
+
+
+def operation_candidates(
+    search_query: str, limit: int = 5, need_id: str = ""
+) -> list[str]:
+    """Return a deterministic shortlist without deciding the final match.
+
+    Two independent rankings are interleaved so an operation that either one
+    places near the top reaches the model: the legacy token score on the
+    model's query, and name coverage on the query plus the need ID.
+    """
     query_tokens = _search_tokens(search_query)
     normalized_query = "_".join(sorted(query_tokens))
     scored: list[tuple[float, str]] = []
@@ -178,9 +223,16 @@ def operation_candidates(search_query: str, limit: int = 5) -> list[str]:
             SequenceMatcher(None, normalized_query, name.casefold()).ratio()
             for name in names
         )
-        score = coverage * 10 + overlap + similarity
-        scored.append((score, canonical))
-    return [canonical for _, canonical in sorted(scored, reverse=True)[:limit]]
+        scored.append((coverage * 10 + overlap + similarity, canonical))
+    legacy = [canonical for _, canonical in sorted(scored, reverse=True)]
+    by_name = _name_coverage_ranking(f"{search_query} {need_id.replace('_', ' ')}")
+
+    merged: list[str] = []
+    for first, second in zip(legacy, by_name):
+        for name in (first, second):
+            if name not in merged:
+                merged.append(name)
+    return merged[:limit]
 
 
 def build_mapping_request(
@@ -382,7 +434,9 @@ class StagedNaturalLanguagePlanner:
             )
             corrected.extend(_normalize_unverified_entities(strategy))
             candidates = {
-                need.need_id: operation_candidates(need.operation_search_query)
+                need.need_id: operation_candidates(
+                    need.operation_search_query, need_id=need.need_id
+                )
                 for need in strategy.needs
             }
             # Persist the expensive strategy result before starting mapping so a
