@@ -963,6 +963,8 @@ The full suite passes 367 tests with no failures.
 
 ## Staged Planner: shortlist, program-side completion and a five-case check (2026-11-05)
 
+> Partly superseded on 2026-11-07: the operation shortlist described here was removed; `complete_plan_from_table` stays. See the last section of this file.
+
 Changes, all in `plan-query-staged` and the execution CLI:
 
 - `compile_manifest` fills each step's `inputs` from `depends_on`, so data passes along the declared dependency edges instead of being found by scanning the board. The staged output for `pdac_known_targets` compiles and runs through `run_plan` (six steps, all `success`).
@@ -983,3 +985,32 @@ Five development cases were run once each with the real model (`outputs/plans/ma
 For research-team decision, not for the Planner to settle: whether the table needs literature co-occurrence and disease-specific expression operations (both runs of the CLDN18.2 case proposed them); whether `retrieve_mechanisms` is an accepted alternative to `retrieve_drug_targets`; and whether ranking inside a filter step is acceptable or must be a separate `rank_targets` step.
 
 The staged route still has no repair loop and does not run the general operation rules, so a plan that fails acceptance is reported, not repaired. `kras_associated_diseases` is an `internal_holdout` case whose rubric and failures were inspected while tuning, so it no longer works as a clean holdout.
+
+
+## Staged Planner: the whole operation table replaces the shortlist (2026-11-07)
+
+Decision from the 2026-11-06 meeting: Stage 2 reads the whole `OPERATION_TABLE` instead of a per-need shortlist. The shortlist is removed. The program-side completion stays, because the comparison below shows it is still needed.
+
+- Removed: `operation_candidates`, `_name_coverage_ranking`, `_token_weights`, `_stem`, `_stem_tokens`, `_search_tokens`, `_shortlist_size`, `PLANNER_SHORTLIST_SIZE` and the `operation_candidates` report field.
+- Kept: `complete_plan_from_table`, `_resolver_operation` and the `program_completions` report field.
+- `build_mapping_request(strategy)` sends the full table once (`operation_table`: canonical operation, equivalent operations, meaning) plus the atomic needs. For the 64 current operations the request is about 9.8k characters (roughly 2.5k tokens). `MAPPING_PROMPT` tells the mapper to inspect every operation in the table.
+- `compile_manifest(question, strategy, mapping, completions=None)` accepts any operation that exists in `OPERATION_TABLE` and refuses a name outside it. After all steps are built it calls `complete_plan_from_table` once and appends each addition to `completions`; `run_with_report` creates a new list per run and writes it to `program_completions`.
+
+Comparison on the same five development cases, one run each with the real model (`outputs/plans/ab_after_*`, `fulltable_*`, `ftcomp_*`). Matched = needs mapped to an existing operation / total needs; for reference, 13/23 before the 2026-11-05 changes.
+
+| Configuration | Matched | Passed hidden acceptance |
+| --- | --- | --- |
+| Shortlist (10 candidates) + completion | 17/23 | 0/5 |
+| Whole table, no completion | 15/21 | 0/5 |
+| Whole table + completion | 19/24 | 0/5 |
+
+Stage 1 produces a different number of needs in each run, so the totals differ and a one- or two-match difference between single runs is noise; the same case also proposes different operation names across runs.
+
+- Why completion stays: with the whole table and no completion, the olaparib plan ended `failed` on hidden acceptance. The mapper chose the right operation but left out its prerequisites (a `resolve_drug` step, two dependencies and four safeguards). With completion, the same case records 8 additions. The table lets the mapper find the operation; it does not make the mapper add what that operation requires.
+- Remaining gaps, mostly decisions for the research team:
+  - `retrieve_approved_indications` has `requires_all=[]`; declaring `resolved_drug` would let the completion add the dependency (a change to the human-approved table).
+  - The filter key is `status` in some plans and `approval_status` in others.
+  - `pdac_drugs_other_cancers` takes a different path than the rubric: `retrieve_disease_drugs`, `retrieve_drug_targets`, `retrieve_target_cancers`, `join_cross_indication_paths`.
+  - Three cases still propose new operations (literature, disease-specific expression, variant-stratified drug mechanism, filter and rank in one step). These are table gaps or Stage 1 granularity.
+- Not measured yet: run-to-run stability. Next: repeat each case five times and compare operation sets across runs (Jaccard), matched mean and standard deviation, and pass rate.
+- The full suite passes 367 tests.

@@ -1,0 +1,332 @@
+{
+  "schema_version": "1.0",
+  "planner_mode": "staged",
+  "question": "Olaparib 的標的是什麼？目前核准了哪些適應症？胰臟癌是其中之一嗎？",
+  "acceptance_case_id": "olaparib_targets_indications",
+  "status": "failed",
+  "strategy": {
+    "research_objective": "Determine Olaparib's molecular target, its currently approved indications, and whether pancreatic cancer is among those approved indications, while separating target-drug evidence, tractability, and disease association from efficacy claims.",
+    "entities": [
+      {
+        "entity_ref": "olaparib",
+        "entity_type": "drug",
+        "mention": "Olaparib",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      },
+      {
+        "entity_ref": "pancreatic_cancer",
+        "entity_type": "disease",
+        "mention": "胰臟癌",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      }
+    ],
+    "needs": [
+      {
+        "need_id": "olaparib_target_identification",
+        "purpose": "鑑定 Olaparib 的分子標的並收集標的-藥物已知證據。",
+        "operation_search_query": "olaparib molecular target PARP1 PARP2 drug target interaction",
+        "depends_on": [],
+        "entity_refs": [
+          "olaparib"
+        ],
+        "required_inputs": [
+          "olaparib_drug_identifier"
+        ],
+        "outputs": [
+          "target_list",
+          "target_drug_evidence"
+        ],
+        "sources": [
+          "open_targets",
+          "chembl"
+        ],
+        "filters": {
+          "drug": "olaparib",
+          "mechanism_of_action": "PARP_inhibitor"
+        },
+        "ranking": {
+          "primary_metric": "target_confidence_score",
+          "direction": "descending",
+          "secondary_metrics": [
+            "evidence_count"
+          ]
+        },
+        "aggregation": {
+          "group_by": "target_id"
+        },
+        "safeguards": [
+          "do_not_infer_unreported_targets",
+          "distinguish_direct_and_indirect_targets"
+        ]
+      },
+      {
+        "need_id": "olaparib_target_tractability",
+        "purpose": "收集 Olaparib 標的的可藥性與 tractability 證據，作為後續分層前置資料。",
+        "operation_search_query": "PARP1 PARP2 tractability druggability small molecule inhibitor",
+        "depends_on": [
+          "olaparib_target_identification"
+        ],
+        "entity_refs": [
+          "olaparib"
+        ],
+        "required_inputs": [
+          "target_list"
+        ],
+        "outputs": [
+          "tractability_profile"
+        ],
+        "sources": [
+          "open_targets",
+          "chembl"
+        ],
+        "filters": {
+          "target_family": "PARP",
+          "modality": "small_molecule"
+        },
+        "ranking": {
+          "primary_metric": "tractability_score",
+          "direction": "descending",
+          "secondary_metrics": []
+        },
+        "aggregation": {
+          "group_by": "target_id"
+        },
+        "safeguards": [
+          "tractability_is_not_efficacy",
+          "do_not_overstate_druggability"
+        ]
+      },
+      {
+        "need_id": "olaparib_approved_indications",
+        "purpose": "收集 Olaparib 目前核准的適應症清單與監管狀態。",
+        "operation_search_query": "olaparib approved indications regulatory status",
+        "depends_on": [],
+        "entity_refs": [
+          "olaparib"
+        ],
+        "required_inputs": [
+          "olaparib_drug_identifier"
+        ],
+        "outputs": [
+          "approved_indication_list",
+          "regulatory_status"
+        ],
+        "sources": [
+          "open_targets",
+          "clinicaltrials_gov"
+        ],
+        "filters": {
+          "drug": "olaparib",
+          "approval_status": "approved"
+        },
+        "ranking": {
+          "primary_metric": "approval_date",
+          "direction": "descending",
+          "secondary_metrics": [
+            "indication_prevalence"
+          ]
+        },
+        "aggregation": {
+          "group_by": "indication_id"
+        },
+        "safeguards": [
+          "do_not_include_trial_only_indications",
+          "distinguish_approved_from_orphan_designation"
+        ]
+      },
+      {
+        "need_id": "pancreatic_cancer_approval_check",
+        "purpose": "判斷胰臟癌是否為 Olaparib 的核准適應症，並標示證據來源。",
+        "operation_search_query": "olaparib pancreatic cancer approved indication",
+        "depends_on": [
+          "olaparib_approved_indications"
+        ],
+        "entity_refs": [
+          "pancreatic_cancer",
+          "olaparib"
+        ],
+        "required_inputs": [
+          "approved_indication_list"
+        ],
+        "outputs": [
+          "pancreatic_cancer_approval_boolean",
+          "supporting_evidence"
+        ],
+        "sources": [
+          "open_targets"
+        ],
+        "filters": {
+          "indication": "pancreatic_cancer",
+          "drug": "olaparib"
+        },
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "treat_missing_evidence_as_unknown_not_negative",
+          "do_not_confuse_clinical_trials_with_approval"
+        ]
+      },
+      {
+        "need_id": "target_disease_association_pancreatic_cancer",
+        "purpose": "收集標的與胰臟癌的疾病關聯證據，並明確標示關聯不等於療效。",
+        "operation_search_query": "PARP pancreatic cancer disease association genetic dependency",
+        "depends_on": [
+          "olaparib_target_identification"
+        ],
+        "entity_refs": [
+          "pancreatic_cancer"
+        ],
+        "required_inputs": [
+          "target_list"
+        ],
+        "outputs": [
+          "target_disease_association_evidence"
+        ],
+        "sources": [
+          "open_targets",
+          "europe_pmc"
+        ],
+        "filters": {
+          "disease": "pancreatic_cancer",
+          "target": "PARP"
+        },
+        "ranking": {
+          "primary_metric": "association_score",
+          "direction": "descending",
+          "secondary_metrics": []
+        },
+        "aggregation": {
+          "group_by": "target_id"
+        },
+        "safeguards": [
+          "association_is_not_efficacy",
+          "missing_evidence_is_unknown"
+        ]
+      }
+    ],
+    "evidence_requirements": [
+      "target_drug_interaction_evidence_for_olaparib",
+      "approved_indication_records_for_olaparib",
+      "pancreatic_cancer_inclusion_status_in_approved_indications",
+      "target_tractability_profile_for_PARP",
+      "target_disease_association_evidence_for_PARP_and_pancreatic_cancer"
+    ],
+    "completion_criteria": [
+      "Olaparib 的分子標的清單與證據已彙整",
+      "Olaparib 核准適應症清單已彙整並標示監管來源",
+      "胰臟癌是否為核准適應症之判斷已完成，並註明證據缺失視為未知而非否定",
+      "標的可藥性證據已收集但不作為療效依據",
+      "標的與胰臟癌疾病關聯證據已收集並標示關聯不等於療效"
+    ],
+    "global_safeguards": [
+      "association_is_not_efficacy",
+      "tractability_is_not_efficacy",
+      "missing_evidence_is_unknown_not_negative",
+      "do_not_guess_unreported_software_operations"
+    ],
+    "characteristics": {
+      "primary": "filter_and_rank",
+      "secondary": [
+        "evidence_directed",
+        "comparison_and_aggregation",
+        "safety_and_negative_knowledge"
+      ]
+    }
+  },
+  "mapping": {
+    "matches": [
+      {
+        "need_id": "olaparib_target_identification",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_drug_targets",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "olaparib_target_tractability",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_tractability",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "olaparib_approved_indications",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_approved_indications",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "pancreatic_cancer_approval_check",
+        "match_status": "matched",
+        "canonical_operation": "check_indication",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "target_disease_association_pancreatic_cancer",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_associated_diseases",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      }
+    ]
+  },
+  "final_plan": null,
+  "semantic_acceptance": {
+    "case_id": "olaparib_targets_indications",
+    "passed": false,
+    "missing_entities": [],
+    "missing_capabilities": [],
+    "missing_operations": [],
+    "missing_dependencies": [
+      "resolve_drug->retrieve_approved_indications"
+    ],
+    "missing_sources": [],
+    "missing_safeguards": [],
+    "missing_filters": [],
+    "missing_ranking": [],
+    "missing_aggregation": [],
+    "forbidden_findings": [],
+    "optional_capabilities_present": [],
+    "accepted_capabilities": [
+      "check_indication",
+      "resolve_drug",
+      "retrieve_approved_indications",
+      "retrieve_drug_targets"
+    ],
+    "actual_operations": [
+      "check_indication",
+      "resolve_drug",
+      "retrieve_approved_indications",
+      "retrieve_associated_diseases",
+      "retrieve_drug_targets",
+      "retrieve_tractability"
+    ],
+    "unrecognized_operations": [],
+    "proposed_operations": []
+  },
+  "strategy_duration_seconds": 39.35032316669822,
+  "mapping_duration_seconds": 18.735431999899447,
+  "total_duration_seconds": 58.08889841567725,
+  "errors": [
+    "compiled plan failed hidden semantic acceptance"
+  ],
+  "corrected_model_claims": [],
+  "timeout_cleanup": {},
+  "evidence_collection_started": false,
+  "executed_retrieval_tools": [],
+  "generated_at": "2026-11-12T16:32:31.123078Z",
+  "program_completions": [
+    "inserted step_resolve_olaparib (resolve_drug) for olaparib: step_olaparib_target_identification (retrieve_drug_targets) requires resolved_drug",
+    "step_olaparib_target_identification: added table-required safeguards ['missing_not_negative', 'provenance_pagination_truncation']",
+    "step_olaparib_target_tractability: added table-required safeguards ['missing_not_negative', 'provenance_pagination_truncation', 'tractability_not_efficacy']",
+    "step_olaparib_approved_indications: added table-required safeguards ['missing_not_negative', 'provenance_pagination_truncation']",
+    "step_pancreatic_cancer_approval_check: added table-required safeguards ['approval_requires_explicit_source', 'database_approval_requires_official_confirmation', 'missing_not_negative']",
+    "step_target_disease_association_pancreatic_cancer: added table-required safeguards ['missing_not_negative', 'provenance_pagination_truncation']"
+  ]
+}

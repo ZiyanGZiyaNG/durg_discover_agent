@@ -3,19 +3,16 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 import re
 from datetime import datetime, timezone
-from difflib import SequenceMatcher
-from functools import lru_cache
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Literal
 from uuid import uuid4
 
 from langchain.agents import create_agent
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from model_factory import get_chat_model
 from natural_language_planner import (
@@ -60,14 +57,53 @@ owns original_question.
 
 MAPPING_PROMPT = """
 You match atomic research needs against a human-approved OPERATION_TABLE. For
-each need, inspect only its supplied candidates. Select a candidate only when
-its meaning covers the need; output its canonical operation, never an alias.
-If none is equivalent, return no_equivalent with a proposed snake_case name and
-reason. Do not invent an approved operation. Do not modify or omit need IDs.
+each need, inspect every operation in the supplied operation_table. Select an
+operation only when its meaning covers the need; output its canonical
+operation, never an alias. If none is equivalent, return no_equivalent with a
+proposed snake_case name and reason. Do not invent an approved operation. Do
+not modify or omit need IDs.
+
+Each operation lists the capabilities it requires and provides. When a need
+declares provided_capabilities, prefer an operation whose provides covers them.
 """
 
 
 SourceName = Literal["open_targets", "europe_pmc", "clinicaltrials_gov", "chembl"]
+
+
+def _capability_vocabulary() -> list[str]:
+    """Data-type names that operations require or provide, without resolved_* forms."""
+    names: set[str] = set()
+    for entry in OPERATION_TABLE.values():
+        names.update(entry.provides)
+        names.update(entry.requires_all)
+        names.update(entry.requires_any)
+    return sorted(name for name in names if not name.startswith("resolved_"))
+
+
+CAPABILITY_NAMES = _capability_vocabulary()
+KNOWN_SAFEGUARDS = sorted(
+    {name for entry in OPERATION_TABLE.values() for name in entry.required_safeguards}
+)
+Capability = Literal[tuple(CAPABILITY_NAMES)]
+
+STRATEGY_VOCABULARY_PROMPT = """
+Capabilities: for every need, set required_capabilities (evidence it consumes)
+and provided_capabilities (evidence it produces), using only these data-type
+names: {capabilities}. Entity resolution is handled by the program, so never
+declare resolved_* names.
+
+Safeguards: use these names when they apply: {safeguards}. Create a new
+snake_case safeguard only when none of them fits.
+"""
+
+
+def build_strategy_prompt() -> str:
+    """Stage 1 prompt plus the closed vocabularies taken from OPERATION_TABLE."""
+    return STRATEGY_PROMPT + STRATEGY_VOCABULARY_PROMPT.format(
+        capabilities=", ".join(CAPABILITY_NAMES),
+        safeguards=", ".join(KNOWN_SAFEGUARDS),
+    )
 
 
 class AtomicResearchNeed(BaseModel):
@@ -83,6 +119,16 @@ class AtomicResearchNeed(BaseModel):
     ranking: RankingSpecV2 | None = None
     aggregation: dict[str, Any] | None = None
     safeguards: list[str] = Field(default_factory=list)
+    required_capabilities: list[Capability] = Field(default_factory=list)
+    provided_capabilities: list[Capability] = Field(default_factory=list)
+
+    @field_validator("required_capabilities", "provided_capabilities", mode="before")
+    @classmethod
+    def drop_unknown_capabilities(cls, value: Any) -> Any:
+        """Keep vocabulary names only, so one stray name cannot fail a whole Stage 1 run."""
+        if not isinstance(value, list):
+            return value
+        return [name for name in value if name in CAPABILITY_NAMES]
 
 
 class ResearchStrategyDraft(BaseModel):
@@ -142,7 +188,6 @@ class StagedPlannerReport(BaseModel):
     acceptance_case_id: str | None = None
     status: Literal["running", "passed", "failed", "pending_human_review"]
     strategy: ResearchStrategyDraft | None = None
-    operation_candidates: dict[str, list[str]] = Field(default_factory=dict)
     mapping: OperationMappingResult | None = None
     final_plan: QueryManifestV2 | None = None
     semantic_acceptance: PlanAcceptanceResult | None = None
@@ -151,155 +196,41 @@ class StagedPlannerReport(BaseModel):
     total_duration_seconds: float
     errors: list[str] = Field(default_factory=list)
     corrected_model_claims: list[str] = Field(default_factory=list)
-    program_completions: list[str] = Field(default_factory=list)
     timeout_cleanup: dict[str, Any] = Field(default_factory=dict)
     evidence_collection_started: Literal[False] = False
     executed_retrieval_tools: list[str] = Field(default_factory=list)
     generated_at: datetime
+    program_completions: list[str] = Field(default_factory=list)
 
 
-def _search_tokens(text: str) -> set[str]:
-    return {
-        token
-        for token in re.findall(r"[a-z0-9]+", text.casefold().replace("-", "_"))
-        if len(token) > 1 and token not in {"and", "for", "the", "per"}
-    }
+def build_mapping_request(strategy: ResearchStrategyDraft) -> dict[str, Any]:
+    """Build the mapper input: the whole OPERATION_TABLE plus every atomic need.
 
-
-_STOP_WORDS = {"and", "for", "the", "per", "by", "of", "in", "on", "to", "with", "as", "or"}
-_SUFFIXES = ("ations", "ation", "ated", "ates", "ate", "ings", "ing", "ies", "ed", "es", "s")
-
-
-def _stem(token: str) -> str:
-    """Crude stemming so disease/diseases and association/associated match."""
-    for suffix in _SUFFIXES:
-        if token.endswith(suffix) and len(token) - len(suffix) >= 3:
-            token = token[: -len(suffix)]
-            break
-    return token[:-1] if token.endswith("e") and len(token) > 3 else token
-
-
-def _stem_tokens(text: str) -> set[str]:
-    return {
-        _stem(token)
-        for token in re.findall(r"[a-z0-9]+", text.casefold())
-        if len(token) > 1 and token not in _STOP_WORDS
-    }
-
-
-@lru_cache(maxsize=1)
-def _token_weights() -> dict[str, float]:
-    """Inverse-document-frequency weight for each stemmed operation-name token.
-
-    Tokens shared by many operations (disease, target) carry little signal;
-    rarer tokens (association, rank) carry more.
+    There is no shortlist, so the mapper can always see the correct operation.
     """
-    frequency: dict[str, int] = {}
-    for canonical, entry in OPERATION_TABLE.items():
-        names = [canonical, *entry.equivalent_operations]
-        for token in set().union(*(_stem_tokens(name) for name in names)):
-            frequency[token] = frequency.get(token, 0) + 1
-    total = len(OPERATION_TABLE)
-    return {
-        token: math.log((total + 1) / (count + 1)) + 1
-        for token, count in frequency.items()
-    }
+    operation_table = [
+        {
+            "canonical_operation": canonical,
+            "equivalent_operations": entry.equivalent_operations,
+            "meaning": entry.description,
+            "requires": [*entry.requires_all, *entry.requires_any],
+            "provides": entry.provides,
+        }
+        for canonical, entry in OPERATION_TABLE.items()
+    ]
+    needs = [
+        {
+            "need_id": need.need_id,
+            "purpose": need.purpose,
+            "required_inputs": need.required_inputs,
+            "outputs": need.outputs,
+            "required_capabilities": need.required_capabilities,
+            "provided_capabilities": need.provided_capabilities,
+        }
+        for need in strategy.needs
+    ]
+    return {"operation_table": operation_table, "atomic_needs": needs}
 
-
-def _name_coverage_ranking(query: str) -> list[str]:
-    """Rank operations by the weighted share of their own name the query covers.
-
-    The denominator is the operation name, so a long query full of entity and
-    database names does not dilute the match, and common name tokens count
-    for less than distinctive ones.
-    """
-    weights = _token_weights()
-    query_tokens = _stem_tokens(query)
-    scored: list[tuple[float, str]] = []
-    for canonical, entry in OPERATION_TABLE.items():
-        best = 0.0
-        for name in [canonical, *entry.equivalent_operations]:
-            name_tokens = _stem_tokens(name)
-            total = sum(weights.get(token, 1.0) for token in name_tokens) or 1.0
-            matched = sum(
-                weights.get(token, 1.0) for token in name_tokens & query_tokens
-            )
-            best = max(best, matched / total * 10 + matched)
-        scored.append((-best, canonical))
-    return [canonical for _, canonical in sorted(scored)]
-
-
-DEFAULT_SHORTLIST_SIZE = 10
-
-
-def _shortlist_size() -> int:
-    """Candidates sent to the mapper per need; PLANNER_SHORTLIST_SIZE overrides."""
-    try:
-        size = int(os.getenv("PLANNER_SHORTLIST_SIZE", DEFAULT_SHORTLIST_SIZE))
-    except ValueError:
-        size = DEFAULT_SHORTLIST_SIZE
-    return max(1, min(size, len(OPERATION_TABLE)))
-
-
-def operation_candidates(
-    search_query: str, limit: int = 5, need_id: str = ""
-) -> list[str]:
-    """Return a deterministic shortlist without deciding the final match.
-
-    Two independent rankings are interleaved so an operation that either one
-    places near the top reaches the model: the legacy token score on the
-    model's query, and name coverage on the query plus the need ID.
-    """
-    query_tokens = _search_tokens(search_query)
-    normalized_query = "_".join(sorted(query_tokens))
-    scored: list[tuple[float, str]] = []
-    for canonical, entry in OPERATION_TABLE.items():
-        names = [canonical, *entry.equivalent_operations]
-        name_tokens = set().union(*(_search_tokens(name) for name in names))
-        overlap = len(query_tokens & name_tokens)
-        coverage = overlap / max(1, len(query_tokens))
-        similarity = max(
-            SequenceMatcher(None, normalized_query, name.casefold()).ratio()
-            for name in names
-        )
-        scored.append((coverage * 10 + overlap + similarity, canonical))
-    legacy = [canonical for _, canonical in sorted(scored, reverse=True)]
-    by_name = _name_coverage_ranking(f"{search_query} {need_id.replace('_', ' ')}")
-
-    merged: list[str] = []
-    for first, second in zip(legacy, by_name):
-        for name in (first, second):
-            if name not in merged:
-                merged.append(name)
-    return merged[:limit]
-
-
-def build_mapping_request(
-    strategy: ResearchStrategyDraft,
-    candidates: dict[str, list[str]],
-) -> dict[str, Any]:
-    needs = []
-    for need in strategy.needs:
-        table_entries = []
-        for canonical in candidates[need.need_id]:
-            entry = OPERATION_TABLE[canonical]
-            table_entries.append(
-                {
-                    "canonical_operation": canonical,
-                    "equivalent_operations": entry.equivalent_operations,
-                    "meaning": entry.description,
-                }
-            )
-        needs.append(
-            {
-                "need_id": need.need_id,
-                "purpose": need.purpose,
-                "required_inputs": need.required_inputs,
-                "outputs": need.outputs,
-                "candidates": table_entries,
-            }
-        )
-    return {"atomic_needs_with_candidates": needs}
 
 def _derive_inputs(
     depends_on: list[str], steps_by_id: dict[str, ResearchPlanStepV2]
@@ -316,7 +247,6 @@ def _derive_inputs(
             step_id=step_id, output=upstream.outputs[0]
         )
     return inputs
-
 
 
 def _resolver_operation(capability: str) -> tuple[str, str] | None:
@@ -355,6 +285,7 @@ def complete_plan_from_table(
                 resolver_for.setdefault(ref, step.step_id)
 
     provided: set[str] = set()
+    position = {step.step_id: index for index, step in enumerate(steps)}
     inserted: list[ResearchPlanStepV2] = []
     for step in steps:
         entry = OPERATION_TABLE.get(step.operation)
@@ -384,7 +315,10 @@ def complete_plan_from_table(
                     new_step = ResearchPlanStepV2(
                         step_id=step_id,
                         operation=operation,
-                        description=f"解析 {mentions[ref]} 為標準識別碼（依操作表前置條件由程式補入）",
+                        description=(
+                            f"Resolve {mentions[ref]} to a canonical identifier "
+                            "(inserted by program from OPERATION_TABLE prerequisites)"
+                        ),
                         entity_refs=[ref],
                         sources=["open_targets"],
                         outputs=[output],
@@ -400,7 +334,42 @@ def complete_plan_from_table(
                     )
                 if resolver_for[ref] not in step.depends_on:
                     step.depends_on.append(resolver_for[ref])
+              # Wire a required resolved_<type> to the resolver step already in the plan.
+        for capability in entry.requires_all:
+            resolver = _resolver_operation(capability)
+            if resolver is None:
+                continue
+            for ref in step.entity_refs:
+                provider = resolver_for.get(ref)
+                if (
+                    entity_types.get(ref) == resolver[1]
+                    and provider
+                    and provider != step.step_id
+                    and provider not in step.depends_on
+                    and position.get(provider, -1) < position[step.step_id]
+                ):
+                    step.depends_on.append(provider)
+                    notes.append(
+                        f"{step.step_id}: depends on existing {provider} "
+                        f"({step.operation} requires {capability})"
+                    )
         provided.update(entry.provides)
+
+    for step in steps:
+        entry = OPERATION_TABLE.get(step.operation)
+        if step.operation_status != "approved" or entry is None:
+            continue
+        # Rename a filter key to the table-declared name that shares its last token.
+        for key in [k for k in step.filters if k not in entry.supported_filters]:
+            matches = [
+                name
+                for name in entry.supported_filters
+                if name not in step.filters
+                and name.rsplit("_", 1)[-1] == key.rsplit("_", 1)[-1]
+            ]
+            if len(matches) == 1:
+                step.filters[matches[0]] = step.filters.pop(key)
+                notes.append(f"{step.step_id}: renamed filter {key} -> {matches[0]}")
 
     for step in [*inserted, *steps]:
         entry = OPERATION_TABLE.get(step.operation)
@@ -417,13 +386,34 @@ def complete_plan_from_table(
     return [*inserted, *steps]
 
 
+
+def wire_needs_by_capability(
+    strategy: ResearchStrategyDraft, notes: list[str]
+) -> None:
+    """Make a need depend on every earlier need that provides a capability it requires."""
+    providers: dict[str, list[str]] = {}
+    for need in strategy.needs:
+        for capability in need.required_capabilities:
+            for provider in providers.get(capability, []):
+                if provider != need.need_id and provider not in need.depends_on:
+                    need.depends_on.append(provider)
+                    notes.append(
+                        f"step_{need.need_id}: depends on step_{provider} "
+                        f"(requires {capability})"
+                    )
+        for capability in need.provided_capabilities:
+            providers.setdefault(capability, []).append(need.need_id)
+
+
 def compile_manifest(
     question: str,
     strategy: ResearchStrategyDraft,
     mapping: OperationMappingResult,
-    candidates: dict[str, list[str]],
     completions: list[str] | None = None,
 ) -> QueryManifestV2:
+    notes = completions if completions is not None else []
+    strategy = strategy.model_copy(deep=True)
+    wire_needs_by_capability(strategy, notes)
     matches = {match.need_id: match for match in mapping.matches}
     expected_ids = {need.need_id for need in strategy.needs}
     if set(matches) != expected_ids or len(mapping.matches) != len(expected_ids):
@@ -434,9 +424,11 @@ def compile_manifest(
     for need in strategy.needs:
         match = matches[need.need_id]
         if match.match_status == "matched":
-            if match.canonical_operation not in candidates[need.need_id]:
+            # The mapper sees the whole table, so the only valid choices are
+            # operations that exist in it.
+            if match.canonical_operation not in OPERATION_TABLE:
                 raise ValueError(
-                    f"need {need.need_id} selected an operation outside its candidates"
+                    f"need {need.need_id} selected an operation outside OPERATION_TABLE"
                 )
             operation = match.canonical_operation
             operation_status = "approved"
@@ -465,14 +457,22 @@ def compile_manifest(
             safeguards=need.safeguards,
             inputs=_derive_inputs(step_depends_on, steps_by_id),
         )
+        if operation_status == "approved" and need.provided_capabilities:
+            provides = set(OPERATION_TABLE[operation].provides)
+            if provides and not provides & set(need.provided_capabilities):
+                notes.append(
+                    f"{step.step_id}: capability mismatch, need provides "
+                    f"{need.provided_capabilities} but {operation} provides {sorted(provides)}"
+                )
         steps.append(step)
         steps_by_id[step.step_id] = step
 
+    # Complete once, after every need has been compiled into a step.
     steps = complete_plan_from_table(
         steps,
         strategy.entities,
         strategy.global_safeguards,
-        completions if completions is not None else [],
+        notes,
     )
     steps_by_id = {step.step_id: step for step in steps}
     for step in steps:
@@ -493,7 +493,7 @@ def compile_manifest(
 
 
 class StagedNaturalLanguagePlanner:
-    """Two LLM stages with deterministic table retrieval and compilation."""
+    """Two LLM stages: strategy, then matching against the full table; Python compiles."""
 
     def __init__(self, strategy_agent=None, mapping_agent=None, timeout_cleanup=None):
         owns_agents = strategy_agent is None and mapping_agent is None
@@ -503,7 +503,7 @@ class StagedNaturalLanguagePlanner:
         self.strategy_agent = strategy_agent or create_agent(
             model=model,
             tools=[],
-            system_prompt=STRATEGY_PROMPT,
+            system_prompt=build_strategy_prompt(),
             response_format=ResearchStrategyDraft,
             name="agent1-staged-strategy",
         )
@@ -535,7 +535,6 @@ class StagedNaturalLanguagePlanner:
         mapping = None
         plan = None
         acceptance = None
-        candidates: dict[str, list[str]] = {}
         corrected: list[str] = []
         completions: list[str] = []
         strategy_duration = None
@@ -550,7 +549,6 @@ class StagedNaturalLanguagePlanner:
                 acceptance_case_id=acceptance_case.case_id if acceptance_case else None,
                 status=status,
                 strategy=strategy,
-                operation_candidates=candidates,
                 mapping=mapping,
                 final_plan=plan if status == "passed" else None,
                 semantic_acceptance=acceptance,
@@ -559,9 +557,9 @@ class StagedNaturalLanguagePlanner:
                 total_duration_seconds=perf_counter() - started,
                 errors=errors,
                 corrected_model_claims=corrected,
-                program_completions=completions,
                 timeout_cleanup=cleanup,
                 generated_at=datetime.now(timezone.utc),
+                program_completions=completions,
             )
             if checkpoint_path:
                 path = Path(checkpoint_path)
@@ -583,19 +581,12 @@ class StagedNaturalLanguagePlanner:
                 payload.model_dump() if hasattr(payload, "model_dump") else payload
             )
             corrected.extend(_normalize_unverified_entities(strategy))
-            candidates = {
-                need.need_id: operation_candidates(
-                    need.operation_search_query,
-                    limit=_shortlist_size(),
-                    need_id=need.need_id,
-                )
-                for need in strategy.needs
-            }
             # Persist the expensive strategy result before starting mapping so a
             # timeout or forced stop never hides which stage was reached.
             finish("running")
             stage_started = perf_counter()
-            request = build_mapping_request(strategy, candidates)
+            # The mapper receives the whole OPERATION_TABLE; no shortlist step.
+            request = build_mapping_request(strategy)
             result = _invoke_with_deadline(
                 self.mapping_agent,
                 {
@@ -615,9 +606,7 @@ class StagedNaturalLanguagePlanner:
                 payload.model_dump() if hasattr(payload, "model_dump") else payload
             )
             finish("running")
-            plan = compile_manifest(
-                question, strategy, mapping, candidates, completions
-            )
+            plan = compile_manifest(question, strategy, mapping, completions)
             proposed = [
                 step.proposed_operation_name
                 for step in plan.plan_steps

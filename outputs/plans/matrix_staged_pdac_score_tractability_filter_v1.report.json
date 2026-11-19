@@ -1,0 +1,259 @@
+{
+  "schema_version": "1.0",
+  "planner_mode": "staged",
+  "question": "列出與胰臟癌關聯分數 > 0.7、且具有已知小分子結合口袋（tractability）的標的。",
+  "acceptance_case_id": "pdac_score_tractability_filter",
+  "status": "failed",
+  "strategy": {
+    "research_objective": "Identify targets associated with pancreatic cancer (association score > 0.7) that have known small molecule binding pockets (tractability).",
+    "entities": [
+      {
+        "entity_ref": "胰臟癌",
+        "entity_type": "disease",
+        "mention": "胰臟癌",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      },
+      {
+        "entity_ref": "標的",
+        "entity_type": "target",
+        "mention": "標的",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      },
+      {
+        "entity_ref": "小分子結合口袋",
+        "entity_type": "mechanism",
+        "mention": "小分子結合口袋",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      }
+    ],
+    "needs": [
+      {
+        "need_id": "need_1_retrieve_pancreatic_cancer_target_associations",
+        "purpose": "從 Open Targets 取得與胰臟癌相關的標的及其關聯分數，僅保留分數大於 0.7 的候選標的。",
+        "operation_search_query": "Open Targets target-disease associations for pancreatic cancer with association score > 0.7",
+        "depends_on": [],
+        "entity_refs": [
+          "胰臟癌",
+          "標的"
+        ],
+        "required_inputs": [
+          "disease: pancreatic cancer",
+          "association score threshold: 0.7"
+        ],
+        "outputs": [
+          "candidate_target_list_with_scores"
+        ],
+        "sources": [
+          "open_targets"
+        ],
+        "filters": {
+          "disease": "pancreatic cancer",
+          "association_score_gt": 0.7
+        },
+        "ranking": {
+          "primary_metric": "association_score",
+          "direction": "descending",
+          "secondary_metrics": []
+        },
+        "aggregation": null,
+        "safeguards": [
+          "Association score is not efficacy; treat missing scores as unknown."
+        ]
+      },
+      {
+        "need_id": "need_2_retrieve_small_molecule_tractability",
+        "purpose": "從 Open Targets/ChEMBL 取得 need_1 中候選標的的小分子結合口袋（tractability）資訊，判定是否具有已知小分子結合口袋。",
+        "operation_search_query": "Open Targets tractability small molecule binding pocket for candidate targets",
+        "depends_on": [
+          "need_1_retrieve_pancreatic_cancer_target_associations"
+        ],
+        "entity_refs": [
+          "標的",
+          "小分子結合口袋"
+        ],
+        "required_inputs": [
+          "candidate_target_list_with_scores from need_1"
+        ],
+        "outputs": [
+          "target_tractability_flags"
+        ],
+        "sources": [
+          "open_targets",
+          "chembl"
+        ],
+        "filters": {
+          "modality": "small_molecule",
+          "evidence_type": "known_binding_pocket"
+        },
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "Tractability is not efficacy; missing tractability evidence is unknown, not negative."
+        ]
+      },
+      {
+        "need_id": "need_3_filter_and_rank_final_targets",
+        "purpose": "將 need_1 的關聯分數與 need_2 的小分子結合口袋資訊交叉比對，輸出同時滿足關聯分數 > 0.7 且具有已知小分子結合口袋的標的清單，並依關聯分數降冪排序。",
+        "operation_search_query": "Filter targets with association score > 0.7 and small molecule binding pocket tractability = true",
+        "depends_on": [
+          "need_1_retrieve_pancreatic_cancer_target_associations",
+          "need_2_retrieve_small_molecule_tractability"
+        ],
+        "entity_refs": [
+          "標的"
+        ],
+        "required_inputs": [
+          "candidate_target_list_with_scores from need_1",
+          "target_tractability_flags from need_2"
+        ],
+        "outputs": [
+          "final_target_list_meeting_criteria"
+        ],
+        "sources": [],
+        "filters": {
+          "association_score_gt": 0.7,
+          "small_molecule_binding_pocket": true
+        },
+        "ranking": {
+          "primary_metric": "association_score",
+          "direction": "descending",
+          "secondary_metrics": []
+        },
+        "aggregation": {
+          "group_by": "target_id"
+        },
+        "safeguards": [
+          "Do not infer efficacy from association or tractability; report only targets meeting both evidence criteria."
+        ]
+      }
+    ],
+    "evidence_requirements": [
+      "Open Targets target-disease association score for pancreatic cancer",
+      "Open Targets/ChEMBL small molecule binding pocket tractability evidence for each candidate target"
+    ],
+    "completion_criteria": [
+      "Produce a final list of target identifiers with pancreatic cancer association score > 0.7 and confirmed small molecule binding pocket tractability.",
+      "Rank the final list by association score descending."
+    ],
+    "global_safeguards": [
+      "Association is not efficacy.",
+      "Tractability is not efficacy.",
+      "Missing evidence is unknown rather than negative."
+    ],
+    "characteristics": {
+      "primary": "filter_and_rank",
+      "secondary": [
+        "evidence_directed"
+      ]
+    }
+  },
+  "operation_candidates": {
+    "need_1_retrieve_pancreatic_cancer_target_associations": [
+      "discover_targets",
+      "retrieve_target_cancers",
+      "retrieve_exact_pairs",
+      "retrieve_associated_diseases",
+      "retrieve_exact_pair"
+    ],
+    "need_2_retrieve_small_molecule_tractability": [
+      "retrieve_tractability",
+      "intersect_targets",
+      "discover_targets",
+      "discover_targets_per_disease",
+      "retrieve_drug_targets"
+    ],
+    "need_3_filter_and_rank_final_targets": [
+      "filter_targets",
+      "retrieve_tractability",
+      "rank_targets",
+      "discover_targets_per_disease",
+      "discover_targets"
+    ]
+  },
+  "mapping": {
+    "matches": [
+      {
+        "need_id": "need_1_retrieve_pancreatic_cancer_target_associations",
+        "match_status": "matched",
+        "canonical_operation": "discover_targets",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "need_2_retrieve_small_molecule_tractability",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_tractability",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "need_3_filter_and_rank_final_targets",
+        "match_status": "matched",
+        "canonical_operation": "filter_targets",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      }
+    ]
+  },
+  "final_plan": null,
+  "semantic_acceptance": {
+    "case_id": "pdac_score_tractability_filter",
+    "passed": false,
+    "missing_entities": [],
+    "missing_capabilities": [
+      "rank_targets"
+    ],
+    "missing_operations": [
+      "rank_targets"
+    ],
+    "missing_dependencies": [
+      "filter_targets->rank_targets"
+    ],
+    "missing_sources": [],
+    "missing_safeguards": [],
+    "missing_filters": [
+      "overall_association_score_gt",
+      "small_molecule_tractability"
+    ],
+    "missing_ranking": [],
+    "missing_aggregation": [],
+    "forbidden_findings": [],
+    "optional_capabilities_present": [],
+    "accepted_capabilities": [
+      "discover_targets",
+      "filter_targets",
+      "resolve_disease",
+      "retrieve_tractability"
+    ],
+    "actual_operations": [
+      "discover_targets",
+      "filter_targets",
+      "resolve_disease",
+      "retrieve_tractability"
+    ],
+    "unrecognized_operations": [],
+    "proposed_operations": []
+  },
+  "strategy_duration_seconds": 15.427869332954288,
+  "mapping_duration_seconds": 19.889277207665145,
+  "total_duration_seconds": 35.34405929129571,
+  "errors": [
+    "compiled plan failed hidden semantic acceptance"
+  ],
+  "corrected_model_claims": [],
+  "program_completions": [
+    "inserted step_resolve_entity (resolve_disease) for 胰臟癌: step_need_1_retrieve_pancreatic_cancer_target_associations (discover_targets) requires resolved_disease",
+    "step_need_1_retrieve_pancreatic_cancer_target_associations: added table-required safeguards ['association_does_not_imply_efficacy', 'association_score_not_probability', 'missing_not_negative', 'provenance_pagination_truncation']",
+    "step_need_2_retrieve_small_molecule_tractability: added table-required safeguards ['missing_not_negative', 'provenance_pagination_truncation', 'tractability_not_efficacy']"
+  ],
+  "timeout_cleanup": {},
+  "evidence_collection_started": false,
+  "executed_retrieval_tools": [],
+  "generated_at": "2026-11-05T14:45:57.654483Z"
+}

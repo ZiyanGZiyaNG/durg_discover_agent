@@ -1,0 +1,391 @@
+{
+  "schema_version": "1.0",
+  "planner_mode": "staged",
+  "question": "有哪些藥物作用在 KRAS G12C／G12D 上？各自的作用機制是什麼？",
+  "acceptance_case_id": "kras_variant_drugs",
+  "status": "failed",
+  "strategy": {
+    "research_objective": "Identify all drugs that act on KRAS G12C or KRAS G12D, describe their mechanisms of action, and stratify evidence by variant while separating target-drug evidence from disease association and efficacy claims.",
+    "entities": [
+      {
+        "entity_ref": "KRAS G12C",
+        "entity_type": "target",
+        "mention": "KRAS G12C",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      },
+      {
+        "entity_ref": "KRAS G12D",
+        "entity_type": "target",
+        "mention": "KRAS G12D",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      }
+    ],
+    "needs": [
+      {
+        "need_id": "target_variant_resolution",
+        "purpose": "將 KRAS G12C 與 KRAS G12D 對應至標準化目標識別碼與基因座標，以便後續檢索藥物與機制證據。",
+        "operation_search_query": "KRAS G12C KRAS G12D canonical target identifier variant annotation",
+        "depends_on": [],
+        "entity_refs": [
+          "KRAS G12C",
+          "KRAS G12D"
+        ],
+        "required_inputs": [
+          "entity mentions"
+        ],
+        "outputs": [
+          "canonical_target_id",
+          "gene_symbol",
+          "variant_annotation",
+          "source_database"
+        ],
+        "sources": [
+          "open_targets",
+          "chembl"
+        ],
+        "filters": {
+          "target": "KRAS",
+          "variant": [
+            "G12C",
+            "G12D"
+          ]
+        },
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "do not infer unlisted variants",
+          "flag unresolved variants as unknown"
+        ]
+      },
+      {
+        "need_id": "known_target_drug_evidence",
+        "purpose": "從已知藥物-目標證據中找出作用於 KRAS G12C 或 KRAS G12D 的藥物，並記錄作用類型與來源。",
+        "operation_search_query": "KRAS G12C inhibitor drug mechanism of action; KRAS G12D inhibitor drug mechanism of action",
+        "depends_on": [
+          "target_variant_resolution"
+        ],
+        "entity_refs": [
+          "KRAS G12C",
+          "KRAS G12D"
+        ],
+        "required_inputs": [
+          "canonical_target_id",
+          "variant_annotation"
+        ],
+        "outputs": [
+          "drug_id",
+          "drug_name",
+          "target_variant",
+          "action_type",
+          "mechanism_of_action",
+          "evidence_source",
+          "confidence_score"
+        ],
+        "sources": [
+          "chembl",
+          "open_targets"
+        ],
+        "filters": {
+          "target_variant": [
+            "KRAS G12C",
+            "KRAS G12D"
+          ],
+          "evidence_type": [
+            "drug_target",
+            "mechanism_of_action"
+          ]
+        },
+        "ranking": {
+          "primary_metric": "evidence_confidence",
+          "direction": "descending",
+          "secondary_metrics": [
+            "drug_approval_status",
+            "publication_count"
+          ]
+        },
+        "aggregation": {
+          "group_by": [
+            "target_variant",
+            "drug_id"
+          ]
+        },
+        "safeguards": [
+          "association is not efficacy",
+          "do not include drugs targeting wild-type KRAS only unless variant-specific evidence exists",
+          "missing evidence is unknown not negative"
+        ]
+      },
+      {
+        "need_id": "mechanism_of_action_literature",
+        "purpose": "從文獻中補充各藥物對 KRAS G12C/G12D 的具體作用機制描述，例如共價結合、非共價抑制、下游訊號抑制等。",
+        "operation_search_query": "drug name KRAS G12C mechanism of action; drug name KRAS G12D mechanism of action",
+        "depends_on": [
+          "known_target_drug_evidence"
+        ],
+        "entity_refs": [
+          "KRAS G12C",
+          "KRAS G12D"
+        ],
+        "required_inputs": [
+          "drug_name",
+          "target_variant"
+        ],
+        "outputs": [
+          "drug_name",
+          "target_variant",
+          "mechanism_description",
+          "molecular_binding_mode",
+          "downstream_effect",
+          "literature_pmid",
+          "evidence_level"
+        ],
+        "sources": [
+          "europe_pmc"
+        ],
+        "filters": {
+          "target_variant": [
+            "KRAS G12C",
+            "KRAS G12D"
+          ],
+          "article_type": [
+            "research_article",
+            "review"
+          ]
+        },
+        "ranking": {
+          "primary_metric": "publication_date",
+          "direction": "descending",
+          "secondary_metrics": [
+            "citation_count",
+            "journal_impact"
+          ]
+        },
+        "aggregation": {
+          "group_by": [
+            "drug_name",
+            "target_variant"
+          ]
+        },
+        "safeguards": [
+          "do not extrapolate mechanism from wild-type KRAS to mutant variants",
+          "distinguish direct target engagement from indirect pathway effects"
+        ]
+      },
+      {
+        "need_id": "tractability_evidence",
+        "purpose": "收集 KRAS G12C 與 KRAS G12D 的可藥性證據，包括小分子、抗體、PROTAC 等模態的可行性評分，供結果分層參考。",
+        "operation_search_query": "KRAS G12C tractability; KRAS G12D tractability",
+        "depends_on": [
+          "target_variant_resolution"
+        ],
+        "entity_refs": [
+          "KRAS G12C",
+          "KRAS G12D"
+        ],
+        "required_inputs": [
+          "canonical_target_id",
+          "variant_annotation"
+        ],
+        "outputs": [
+          "target_variant",
+          "modality",
+          "tractability_score",
+          "evidence_source",
+          "druggability_assessment"
+        ],
+        "sources": [
+          "open_targets"
+        ],
+        "filters": {
+          "target": "KRAS",
+          "variant": [
+            "G12C",
+            "G12D"
+          ]
+        },
+        "ranking": {
+          "primary_metric": "tractability_score",
+          "direction": "descending",
+          "secondary_metrics": []
+        },
+        "aggregation": {
+          "group_by": [
+            "target_variant",
+            "modality"
+          ]
+        },
+        "safeguards": [
+          "tractability is not efficacy",
+          "do not use tractability to infer clinical benefit"
+        ]
+      },
+      {
+        "need_id": "result_stratification_and_aggregation",
+        "purpose": "將藥物、機制與可藥性證據依 KRAS G12C / G12D 分層彙整，產出最終結構化回答。",
+        "operation_search_query": "aggregate KRAS G12C G12D drugs mechanism of action",
+        "depends_on": [
+          "known_target_drug_evidence",
+          "mechanism_of_action_literature",
+          "tractability_evidence"
+        ],
+        "entity_refs": [
+          "KRAS G12C",
+          "KRAS G12D"
+        ],
+        "required_inputs": [
+          "drug_target_evidence",
+          "mechanism_literature",
+          "tractability_evidence"
+        ],
+        "outputs": [
+          "stratified_drug_list",
+          "mechanism_summary_by_variant",
+          "evidence_gaps",
+          "unknown_entries"
+        ],
+        "sources": [],
+        "filters": {},
+        "ranking": {
+          "primary_metric": "evidence_confidence",
+          "direction": "descending",
+          "secondary_metrics": [
+            "approval_status",
+            "clinical_phase"
+          ]
+        },
+        "aggregation": {
+          "group_by": [
+            "target_variant",
+            "drug_name"
+          ],
+          "keys": [
+            "mechanism_of_action",
+            "tractability_score",
+            "evidence_source"
+          ]
+        },
+        "safeguards": [
+          "missing evidence is unknown rather than negative",
+          "do not claim efficacy from target engagement alone",
+          "separate disease association from translational support if disease context is added later"
+        ]
+      }
+    ],
+    "evidence_requirements": [
+      "known drug-target binding or functional modulation evidence for KRAS G12C and KRAS G12D",
+      "mechanism of action descriptions from peer-reviewed literature or drug labels",
+      "tractability or druggability assessments for KRAS G12C and KRAS G12D"
+    ],
+    "completion_criteria": [
+      "All drugs acting on KRAS G12C or KRAS G12D are listed with source and confidence.",
+      "Mechanism of action is described for each drug-variant pair, or marked unknown if no evidence.",
+      "Results are stratified by variant (G12C vs G12D).",
+      "Tractability evidence is attached where available but not interpreted as efficacy."
+    ],
+    "global_safeguards": [
+      "Do not infer efficacy from target binding alone.",
+      "Do not treat absence of evidence as evidence of no effect.",
+      "Keep disease association separate from drug-target evidence; no disease is specified in the question.",
+      "Do not guess software operations or database internals."
+    ],
+    "characteristics": {
+      "primary": "filter_and_rank",
+      "secondary": [
+        "evidence_directed",
+        "comparison_and_aggregation"
+      ]
+    }
+  },
+  "mapping": {
+    "matches": [
+      {
+        "need_id": "target_variant_resolution",
+        "match_status": "matched",
+        "canonical_operation": "resolve_target_variants",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "known_target_drug_evidence",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_target_drugs",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "mechanism_of_action_literature",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_mechanisms",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "tractability_evidence",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_tractability",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "result_stratification_and_aggregation",
+        "match_status": "matched",
+        "canonical_operation": "stratify_target_evidence_layers",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      }
+    ]
+  },
+  "final_plan": null,
+  "semantic_acceptance": {
+    "case_id": "kras_variant_drugs",
+    "passed": false,
+    "missing_entities": [],
+    "missing_capabilities": [],
+    "missing_operations": [],
+    "missing_dependencies": [],
+    "missing_sources": [],
+    "missing_safeguards": [],
+    "missing_filters": [],
+    "missing_ranking": [],
+    "missing_aggregation": [
+      "group_by_variant"
+    ],
+    "forbidden_findings": [],
+    "optional_capabilities_present": [],
+    "accepted_capabilities": [
+      "resolve_target_variants",
+      "retrieve_mechanisms",
+      "retrieve_target_drugs"
+    ],
+    "actual_operations": [
+      "resolve_target_variants",
+      "retrieve_mechanisms",
+      "retrieve_target_drugs",
+      "retrieve_tractability",
+      "stratify_target_evidence_layers"
+    ],
+    "unrecognized_operations": [],
+    "proposed_operations": []
+  },
+  "strategy_duration_seconds": 32.68695612438023,
+  "mapping_duration_seconds": 12.686038083396852,
+  "total_duration_seconds": 45.376221999526024,
+  "errors": [
+    "compiled plan failed hidden semantic acceptance"
+  ],
+  "corrected_model_claims": [],
+  "timeout_cleanup": {},
+  "evidence_collection_started": false,
+  "executed_retrieval_tools": [],
+  "generated_at": "2026-11-12T16:23:44.589239Z",
+  "program_completions": [
+    "step_target_variant_resolution: added table-required safeguards ['variant_specificity_required']",
+    "step_known_target_drug_evidence: added table-required safeguards ['missing_not_negative', 'provenance_pagination_truncation']",
+    "step_mechanism_of_action_literature: added table-required safeguards ['missing_not_negative', 'provenance_pagination_truncation']",
+    "step_tractability_evidence: added table-required safeguards ['missing_not_negative', 'provenance_pagination_truncation', 'tractability_not_efficacy']"
+  ]
+}

@@ -1,0 +1,454 @@
+{
+  "schema_version": "1.0",
+  "planner_mode": "staged",
+  "question": "有哪些藥物作用在 KRAS G12C／G12D 上？各自的作用機制是什麼？",
+  "acceptance_case_id": "kras_variant_drugs",
+  "status": "pending_human_review",
+  "strategy": {
+    "research_objective": "Identify all drugs acting on KRAS G12C and KRAS G12D, describe their mechanisms of action, and stratify evidence by variant, approval status, and evidence type while marking missing evidence as unknown.",
+    "entities": [
+      {
+        "entity_ref": "KRAS G12C",
+        "entity_type": "target",
+        "mention": "KRAS G12C",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      },
+      {
+        "entity_ref": "KRAS G12D",
+        "entity_type": "target",
+        "mention": "KRAS G12D",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      }
+    ],
+    "needs": [
+      {
+        "need_id": "need_target_family_classification",
+        "purpose": "確認 KRAS G12C 與 KRAS G12D 歸屬於 KRAS/RAS 目標家族，建立後續藥物檢索的目標範圍。",
+        "operation_search_query": "KRAS G12C KRAS G12D target family classification RAS GTPase",
+        "depends_on": [],
+        "entity_refs": [
+          "KRAS G12C",
+          "KRAS G12D"
+        ],
+        "required_inputs": [],
+        "outputs": [
+          "target_family_classification"
+        ],
+        "sources": [
+          "open_targets",
+          "chembl"
+        ],
+        "filters": {},
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "variant_specificity_required"
+        ],
+        "required_capabilities": [],
+        "provided_capabilities": [
+          "target_family_classification"
+        ]
+      },
+      {
+        "need_id": "need_target_drug_evidence",
+        "purpose": "針對 KRAS G12C 與 KRAS G12D，蒐集已知作用藥物及其標註的作用機制（例如共價抑制、非共價抑制、GDP/GTP 狀態穩定等）。",
+        "operation_search_query": "KRAS G12C inhibitor drug mechanism of action KRAS G12D inhibitor drug mechanism of action",
+        "depends_on": [
+          "need_target_family_classification"
+        ],
+        "entity_refs": [
+          "KRAS G12C",
+          "KRAS G12D"
+        ],
+        "required_inputs": [
+          "target_family_classification"
+        ],
+        "outputs": [
+          "target_drug_evidence"
+        ],
+        "sources": [
+          "open_targets",
+          "chembl",
+          "europe_pmc"
+        ],
+        "filters": {
+          "variant": [
+            "G12C",
+            "G12D"
+          ],
+          "target": [
+            "KRAS"
+          ]
+        },
+        "ranking": {
+          "primary_metric": "evidence_score",
+          "direction": "descending",
+          "secondary_metrics": [
+            "clinical_phase",
+            "approval_status"
+          ]
+        },
+        "aggregation": {
+          "group_by": [
+            "drug",
+            "variant",
+            "mechanism_of_action"
+          ]
+        },
+        "safeguards": [
+          "variant_specificity_required",
+          "association_does_not_imply_efficacy",
+          "missing_not_negative"
+        ],
+        "required_capabilities": [
+          "target_family_classification"
+        ],
+        "provided_capabilities": [
+          "target_drug_evidence"
+        ]
+      },
+      {
+        "need_id": "need_evidence_by_type",
+        "purpose": "將 KRAS G12C/G12D 藥物的作用機制證據依證據類型分類（臨床試驗、前臨床、文獻），區分確立機制與推測機制。",
+        "operation_search_query": "KRAS G12C G12D drug mechanism evidence type clinical preclinical literature",
+        "depends_on": [
+          "need_target_drug_evidence"
+        ],
+        "entity_refs": [
+          "KRAS G12C",
+          "KRAS G12D"
+        ],
+        "required_inputs": [
+          "target_drug_evidence"
+        ],
+        "outputs": [
+          "evidence_by_type"
+        ],
+        "sources": [
+          "open_targets",
+          "europe_pmc",
+          "clinicaltrials_gov"
+        ],
+        "filters": {},
+        "ranking": null,
+        "aggregation": {
+          "group_by": [
+            "drug",
+            "evidence_type",
+            "variant"
+          ]
+        },
+        "safeguards": [
+          "provenance_pagination_truncation",
+          "association_does_not_imply_efficacy"
+        ],
+        "required_capabilities": [
+          "target_drug_evidence"
+        ],
+        "provided_capabilities": [
+          "evidence_by_type"
+        ]
+      },
+      {
+        "need_id": "need_approval_evidence",
+        "purpose": "針對已識別藥物，查明監管核准狀態與核准適應症，避免將研發中藥物誤認為已上市。",
+        "operation_search_query": "KRAS G12C G12D drug approval status FDA EMA NMPA",
+        "depends_on": [
+          "need_target_drug_evidence"
+        ],
+        "entity_refs": [
+          "KRAS G12C",
+          "KRAS G12D"
+        ],
+        "required_inputs": [
+          "target_drug_evidence"
+        ],
+        "outputs": [
+          "approval_evidence"
+        ],
+        "sources": [
+          "open_targets",
+          "chembl"
+        ],
+        "filters": {},
+        "ranking": null,
+        "aggregation": {
+          "group_by": [
+            "drug",
+            "approval_status",
+            "region"
+          ]
+        },
+        "safeguards": [
+          "approval_requires_explicit_source",
+          "database_approval_requires_official_confirmation",
+          "missing_not_negative"
+        ],
+        "required_capabilities": [
+          "target_drug_evidence"
+        ],
+        "provided_capabilities": [
+          "approval_evidence"
+        ]
+      },
+      {
+        "need_id": "need_clinical_stage_evidence",
+        "purpose": "對未核准藥物，蒐集臨床試驗階段與試驗終止資訊，作為機制驗證的補充。",
+        "operation_search_query": "KRAS G12C G12D drug clinical trial phase terminated ongoing",
+        "depends_on": [
+          "need_target_drug_evidence",
+          "need_approval_evidence"
+        ],
+        "entity_refs": [
+          "KRAS G12C",
+          "KRAS G12D"
+        ],
+        "required_inputs": [
+          "target_drug_evidence",
+          "approval_evidence"
+        ],
+        "outputs": [
+          "clinical_stage_evidence",
+          "clinical_trial_evidence",
+          "trial_termination_evidence"
+        ],
+        "sources": [
+          "clinicaltrials_gov",
+          "open_targets"
+        ],
+        "filters": {},
+        "ranking": null,
+        "aggregation": {
+          "group_by": [
+            "drug",
+            "clinical_phase",
+            "trial_status"
+          ]
+        },
+        "safeguards": [
+          "missing_not_negative"
+        ],
+        "required_capabilities": [
+          "target_drug_evidence",
+          "approval_evidence"
+        ],
+        "provided_capabilities": [
+          "clinical_stage_evidence",
+          "clinical_trial_evidence",
+          "trial_termination_evidence"
+        ]
+      },
+      {
+        "need_id": "need_stratified_target_evidence",
+        "purpose": "依 KRAS 變體（G12C 與 G12D）與作用機制分層彙整藥物證據，並標示缺乏證據者為「未知」而非「無」。",
+        "operation_search_query": "KRAS G12C G12D drug stratified evidence mechanism variant comparison",
+        "depends_on": [
+          "need_target_drug_evidence",
+          "need_evidence_by_type",
+          "need_approval_evidence",
+          "need_clinical_stage_evidence"
+        ],
+        "entity_refs": [
+          "KRAS G12C",
+          "KRAS G12D"
+        ],
+        "required_inputs": [
+          "target_drug_evidence",
+          "evidence_by_type",
+          "approval_evidence",
+          "clinical_stage_evidence"
+        ],
+        "outputs": [
+          "stratified_target_evidence"
+        ],
+        "sources": [
+          "open_targets",
+          "chembl",
+          "europe_pmc",
+          "clinicaltrials_gov"
+        ],
+        "filters": {},
+        "ranking": null,
+        "aggregation": {
+          "group_by": [
+            "variant",
+            "drug",
+            "mechanism_of_action",
+            "approval_status"
+          ]
+        },
+        "safeguards": [
+          "missing_not_negative",
+          "association_does_not_imply_efficacy",
+          "variant_specificity_required"
+        ],
+        "required_capabilities": [
+          "target_drug_evidence",
+          "evidence_by_type",
+          "approval_evidence",
+          "clinical_stage_evidence"
+        ],
+        "provided_capabilities": [
+          "stratified_target_evidence"
+        ]
+      },
+      {
+        "need_id": "need_normalized_comparison",
+        "purpose": "將 G12C 與 G12D 藥物證據正規化後進行比較，識別共同與獨有藥物及其機制差異。",
+        "operation_search_query": "KRAS G12C vs G12D drug comparison mechanism normalized",
+        "depends_on": [
+          "need_stratified_target_evidence"
+        ],
+        "entity_refs": [
+          "KRAS G12C",
+          "KRAS G12D"
+        ],
+        "required_inputs": [
+          "stratified_target_evidence"
+        ],
+        "outputs": [
+          "normalized_comparison"
+        ],
+        "sources": [
+          "open_targets",
+          "chembl"
+        ],
+        "filters": {},
+        "ranking": {
+          "primary_metric": "evidence_count",
+          "direction": "descending",
+          "secondary_metrics": [
+            "approval_status",
+            "clinical_phase"
+          ]
+        },
+        "aggregation": {
+          "group_by": [
+            "variant",
+            "drug",
+            "mechanism_of_action"
+          ]
+        },
+        "safeguards": [
+          "association_score_not_probability",
+          "missing_not_negative"
+        ],
+        "required_capabilities": [
+          "stratified_target_evidence"
+        ],
+        "provided_capabilities": [
+          "normalized_comparison"
+        ]
+      }
+    ],
+    "evidence_requirements": [
+      "target_family_classification",
+      "target_drug_evidence",
+      "evidence_by_type",
+      "approval_evidence",
+      "clinical_stage_evidence",
+      "clinical_trial_evidence",
+      "trial_termination_evidence",
+      "stratified_target_evidence",
+      "normalized_comparison"
+    ],
+    "completion_criteria": [
+      "KRAS G12C and KRAS G12D target family classification is confirmed",
+      "All known drugs acting on KRAS G12C and KRAS G12D are listed with their annotated mechanisms of action",
+      "Mechanism evidence is classified by evidence type to distinguish clinical from preclinical sources",
+      "Approval status and clinical trial phase are annotated for each drug",
+      "Evidence is stratified by variant and mechanism, with missing evidence marked as unknown rather than negative",
+      "A normalized comparison table between G12C and G12D drugs is produced"
+    ],
+    "global_safeguards": [
+      "variant_specificity_required",
+      "association_does_not_imply_efficacy",
+      "missing_not_negative",
+      "approval_requires_explicit_source",
+      "database_approval_requires_official_confirmation",
+      "provenance_pagination_truncation",
+      "association_score_not_probability"
+    ],
+    "characteristics": {
+      "primary": "filter_and_rank",
+      "secondary": [
+        "evidence_directed",
+        "comparison_and_aggregation"
+      ]
+    }
+  },
+  "mapping": {
+    "matches": [
+      {
+        "need_id": "need_target_family_classification",
+        "match_status": "matched",
+        "canonical_operation": "classify_kinase_targets",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "need_target_drug_evidence",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_target_drugs",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "need_evidence_by_type",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_evidence_by_type",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "need_approval_evidence",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_approved_indications",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "need_clinical_stage_evidence",
+        "match_status": "no_equivalent",
+        "canonical_operation": null,
+        "proposed_operation_name": "collect_clinical_stage_and_termination_evidence",
+        "proposal_reason": "No single approved operation covers the full need: it requires collecting both clinical-stage and trial-termination evidence for unapproved drugs and providing clinical_stage_evidence, clinical_trial_evidence, and trial_termination_evidence together. These capabilities are split across retrieve_clinical_stage, retrieve_clinical_trials, and retrieve_trial_terminations, and no operation's meaning covers both collection tasks at once."
+      },
+      {
+        "need_id": "need_stratified_target_evidence",
+        "match_status": "matched",
+        "canonical_operation": "stratify_target_evidence_layers",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "need_normalized_comparison",
+        "match_status": "matched",
+        "canonical_operation": "normalize_comparison_dimensions",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      }
+    ]
+  },
+  "final_plan": null,
+  "semantic_acceptance": null,
+  "strategy_duration_seconds": 52.69873212464154,
+  "mapping_duration_seconds": 187.95792208332568,
+  "total_duration_seconds": 240.66044429130852,
+  "errors": [
+    "proposed operations require human review"
+  ],
+  "corrected_model_claims": [],
+  "timeout_cleanup": {},
+  "evidence_collection_started": false,
+  "executed_retrieval_tools": [],
+  "generated_at": "2026-11-12T18:47:11.288471Z",
+  "program_completions": [
+    "inserted step_resolve_kras_g12c (resolve_target) for KRAS G12C: step_need_target_family_classification (classify_kinase_targets) requires resolved_target",
+    "inserted step_resolve_kras_g12d (resolve_target) for KRAS G12D: step_need_target_family_classification (classify_kinase_targets) requires resolved_target"
+  ]
+}

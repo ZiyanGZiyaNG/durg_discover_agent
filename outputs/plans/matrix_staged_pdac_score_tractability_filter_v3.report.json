@@ -1,0 +1,273 @@
+{
+  "schema_version": "1.0",
+  "planner_mode": "staged",
+  "question": "列出與胰臟癌關聯分數 > 0.7、且具有已知小分子結合口袋（tractability）的標的。",
+  "acceptance_case_id": "pdac_score_tractability_filter",
+  "status": "failed",
+  "strategy": {
+    "research_objective": "列出與胰臟癌關聯分數大於 0.7 且具有已知小分子結合口袋（tractability）的標的。",
+    "entities": [
+      {
+        "entity_ref": "胰臟癌",
+        "entity_type": "disease",
+        "mention": "胰臟癌",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      },
+      {
+        "entity_ref": "標的",
+        "entity_type": "target",
+        "mention": "標的",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      }
+    ],
+    "needs": [
+      {
+        "need_id": "pancreatic_cancer_target_associations",
+        "purpose": "檢索胰臟癌與標的之關聯分數，並篩選大於 0.7 的標的",
+        "operation_search_query": "Open Targets disease-target associations for pancreatic cancer",
+        "depends_on": [],
+        "entity_refs": [
+          "胰臟癌",
+          "標的"
+        ],
+        "required_inputs": [
+          "disease_id_or_name",
+          "association_score_threshold"
+        ],
+        "outputs": [
+          "target_id",
+          "association_score"
+        ],
+        "sources": [
+          "open_targets"
+        ],
+        "filters": {
+          "disease": "pancreatic cancer",
+          "association_score_gt": 0.7
+        },
+        "ranking": {
+          "primary_metric": "association_score",
+          "direction": "descending",
+          "secondary_metrics": []
+        },
+        "aggregation": null,
+        "safeguards": [
+          "association_score_is_not_efficacy",
+          "missing_score_is_unknown"
+        ]
+      },
+      {
+        "need_id": "small_molecule_tractability",
+        "purpose": "檢索標的的小分子結合口袋可藥性證據",
+        "operation_search_query": "Open Targets or ChEMBL small molecule binding pocket tractability for targets",
+        "depends_on": [
+          "pancreatic_cancer_target_associations"
+        ],
+        "entity_refs": [
+          "標的"
+        ],
+        "required_inputs": [
+          "target_id_list_from_need_1"
+        ],
+        "outputs": [
+          "target_id",
+          "has_small_molecule_binding_pocket",
+          "tractability_source"
+        ],
+        "sources": [
+          "open_targets",
+          "chembl"
+        ],
+        "filters": {
+          "modality": "small_molecule",
+          "has_binding_pocket": true
+        },
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "missing_tractability_is_unknown_not_negative",
+          "tractability_is_not_efficacy"
+        ]
+      },
+      {
+        "need_id": "combined_targets",
+        "purpose": "整合關聯分數與小分子結合口袋可藥性，輸出同時滿足兩個條件的標的清單",
+        "operation_search_query": "intersect targets from need 1 and need 2",
+        "depends_on": [
+          "pancreatic_cancer_target_associations",
+          "small_molecule_tractability"
+        ],
+        "entity_refs": [
+          "標的"
+        ],
+        "required_inputs": [
+          "target_association_scores",
+          "target_tractability_flags"
+        ],
+        "outputs": [
+          "target_id",
+          "association_score",
+          "has_small_molecule_binding_pocket"
+        ],
+        "sources": [],
+        "filters": {
+          "association_score_gt": 0.7,
+          "has_small_molecule_binding_pocket": true
+        },
+        "ranking": {
+          "primary_metric": "association_score",
+          "direction": "descending",
+          "secondary_metrics": []
+        },
+        "aggregation": {
+          "group_by": "target_id"
+        },
+        "safeguards": [
+          "do_not_infer_efficacy_from_association_or_tractability"
+        ]
+      }
+    ],
+    "evidence_requirements": [
+      "胰臟癌與標的的關聯分數大於 0.7",
+      "標的具有已知小分子結合口袋（tractability）證據"
+    ],
+    "completion_criteria": [
+      "產出符合條件的標的 ID 清單，並包含各標的關聯分數與小分子結合口袋證據來源"
+    ],
+    "global_safeguards": [
+      "關聯分數不代表療效",
+      "可藥性不代表療效",
+      "缺失證據視為未知而非否定"
+    ],
+    "characteristics": {
+      "primary": "filter_and_rank",
+      "secondary": [
+        "evidence_directed"
+      ]
+    }
+  },
+  "operation_candidates": {
+    "pancreatic_cancer_target_associations": [
+      "retrieve_exact_pairs",
+      "retrieve_target_cancers",
+      "discover_targets",
+      "retrieve_associated_diseases",
+      "join_disease_target_drug",
+      "resolve_disease_targets",
+      "resolve_disease_target",
+      "retrieve_exact_pair",
+      "discover_targets_per_disease",
+      "retrieve_target_drugs"
+    ],
+    "small_molecule_tractability": [
+      "retrieve_tractability",
+      "discover_targets_per_disease",
+      "resolve_target",
+      "discover_targets",
+      "resolve_targets",
+      "intersect_targets",
+      "rank_targets",
+      "retrieve_target_drugs",
+      "compare_targets",
+      "retrieve_drug_targets"
+    ],
+    "combined_targets": [
+      "intersect_targets",
+      "filter_targets",
+      "resolve_target",
+      "resolve_disease_targets",
+      "resolve_targets",
+      "rank_targets",
+      "classify_kinase_targets",
+      "compare_targets",
+      "discover_targets",
+      "retrieve_drug_targets"
+    ]
+  },
+  "mapping": {
+    "matches": [
+      {
+        "need_id": "pancreatic_cancer_target_associations",
+        "match_status": "matched",
+        "canonical_operation": "discover_targets",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "small_molecule_tractability",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_tractability",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "combined_targets",
+        "match_status": "matched",
+        "canonical_operation": "filter_targets",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      }
+    ]
+  },
+  "final_plan": null,
+  "semantic_acceptance": {
+    "case_id": "pdac_score_tractability_filter",
+    "passed": false,
+    "missing_entities": [],
+    "missing_capabilities": [
+      "rank_targets"
+    ],
+    "missing_operations": [
+      "rank_targets"
+    ],
+    "missing_dependencies": [
+      "filter_targets->rank_targets"
+    ],
+    "missing_sources": [],
+    "missing_safeguards": [],
+    "missing_filters": [
+      "overall_association_score_gt",
+      "small_molecule_tractability"
+    ],
+    "missing_ranking": [],
+    "missing_aggregation": [],
+    "forbidden_findings": [],
+    "optional_capabilities_present": [],
+    "accepted_capabilities": [
+      "discover_targets",
+      "filter_targets",
+      "resolve_disease",
+      "retrieve_tractability"
+    ],
+    "actual_operations": [
+      "discover_targets",
+      "filter_targets",
+      "resolve_disease",
+      "retrieve_tractability"
+    ],
+    "unrecognized_operations": [],
+    "proposed_operations": []
+  },
+  "strategy_duration_seconds": 12.332553916610777,
+  "mapping_duration_seconds": 21.957911875098944,
+  "total_duration_seconds": 34.31442895811051,
+  "errors": [
+    "compiled plan failed hidden semantic acceptance"
+  ],
+  "corrected_model_claims": [
+    "胰臟癌: removed unverified identity authority"
+  ],
+  "program_completions": [
+    "inserted step_resolve_entity (resolve_disease) for 胰臟癌: step_pancreatic_cancer_target_associations (discover_targets) requires resolved_disease",
+    "step_pancreatic_cancer_target_associations: added table-required safeguards ['association_does_not_imply_efficacy', 'association_score_not_probability', 'missing_not_negative', 'provenance_pagination_truncation']",
+    "step_small_molecule_tractability: added table-required safeguards ['missing_not_negative', 'provenance_pagination_truncation', 'tractability_not_efficacy']"
+  ],
+  "timeout_cleanup": {},
+  "evidence_collection_started": false,
+  "executed_retrieval_tools": [],
+  "generated_at": "2026-11-05T15:02:01.612515Z"
+}

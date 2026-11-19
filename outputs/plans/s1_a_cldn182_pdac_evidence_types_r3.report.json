@@ -1,0 +1,301 @@
+{
+  "schema_version": "1.0",
+  "planner_mode": "staged",
+  "question": "CLDN18.2 與胰臟癌的關聯，主要來自哪類證據？體細胞突變、表現量資料還是文獻？",
+  "acceptance_case_id": "cldn182_pdac_evidence_types",
+  "status": "pending_human_review",
+  "strategy": {
+    "research_objective": "Determine whether the CLDN18.2–pancreatic cancer association is primarily supported by somatic mutation evidence, expression data, or literature, while keeping disease association separate from translational support.",
+    "entities": [
+      {
+        "entity_ref": "CLDN18.2",
+        "entity_type": "target",
+        "mention": "CLDN18.2",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      },
+      {
+        "entity_ref": "pancreatic_cancer",
+        "entity_type": "disease",
+        "mention": "胰臟癌",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      }
+    ],
+    "needs": [
+      {
+        "need_id": "open_targets_association_evidence_by_type",
+        "purpose": "從 Open Targets 檢索 CLDN18.2 與胰臟癌的疾病關聯證據，並依證據類型（體細胞突變、表現量、文獻）分類，取得各類證據的分數與筆數。",
+        "operation_search_query": "CLDN18.2 pancreatic cancer association evidence type score",
+        "depends_on": [],
+        "entity_refs": [
+          "CLDN18.2",
+          "pancreatic_cancer"
+        ],
+        "required_inputs": [
+          "CLDN18.2 target ID",
+          "pancreatic cancer disease ID",
+          "evidence type ontology"
+        ],
+        "outputs": [
+          "evidence_records",
+          "evidence_type_scores",
+          "evidence_type_counts"
+        ],
+        "sources": [
+          "open_targets"
+        ],
+        "filters": {
+          "target": "CLDN18.2",
+          "disease": "pancreatic_cancer",
+          "evidence_types": [
+            "somatic_mutation",
+            "expression",
+            "literature"
+          ]
+        },
+        "ranking": {
+          "primary_metric": "evidence_score",
+          "direction": "descending",
+          "secondary_metrics": [
+            "evidence_count"
+          ]
+        },
+        "aggregation": {
+          "group_by": "evidence_type",
+          "sum": "evidence_score",
+          "count": "record_count"
+        },
+        "safeguards": [
+          "association_is_not_efficacy",
+          "missing_evidence_is_unknown_not_negative"
+        ]
+      },
+      {
+        "need_id": "europe_pmc_literature_coverage",
+        "purpose": "從 Europe PMC 檢索同時提及 CLDN18.2 與胰臟癌的文獻，統計文獻數量與年份分佈，以補充文獻類證據的規模。",
+        "operation_search_query": "CLDN18.2 AND pancreatic cancer",
+        "depends_on": [],
+        "entity_refs": [
+          "CLDN18.2",
+          "pancreatic_cancer"
+        ],
+        "required_inputs": [
+          "CLDN18.2 synonyms",
+          "pancreatic cancer synonyms"
+        ],
+        "outputs": [
+          "literature_count",
+          "publication_year_distribution",
+          "study_design_summary"
+        ],
+        "sources": [
+          "europe_pmc"
+        ],
+        "filters": {
+          "query": "CLDN18.2 AND pancreatic cancer",
+          "include_abstracts": true
+        },
+        "ranking": null,
+        "aggregation": {
+          "group_by": "publication_year",
+          "count": "articles"
+        },
+        "safeguards": [
+          "literature_volume_is_not_causal_evidence"
+        ]
+      },
+      {
+        "need_id": "aggregate_dominant_evidence_type",
+        "purpose": "彙總 Open Targets 證據類型分數與 Europe PMC 文獻數量，比較體細胞突變、表現量與文獻三者的證據強度，判斷 CLDN18.2 與胰臟癌關聯主要來自哪類證據。",
+        "operation_search_query": "aggregate evidence type dominance CLDN18.2 pancreatic cancer",
+        "depends_on": [
+          "open_targets_association_evidence_by_type",
+          "europe_pmc_literature_coverage"
+        ],
+        "entity_refs": [
+          "CLDN18.2",
+          "pancreatic_cancer"
+        ],
+        "required_inputs": [
+          "evidence_type_scores",
+          "evidence_type_counts",
+          "literature_count"
+        ],
+        "outputs": [
+          "dominant_evidence_type",
+          "evidence_type_comparison",
+          "confidence_level"
+        ],
+        "sources": [],
+        "filters": {},
+        "ranking": {
+          "primary_metric": "aggregated_evidence_strength",
+          "direction": "descending",
+          "secondary_metrics": []
+        },
+        "aggregation": {
+          "group_by": "evidence_type",
+          "metrics": [
+            "score_sum",
+            "record_count",
+            "literature_count"
+          ]
+        },
+        "safeguards": [
+          "missing_evidence_is_unknown_not_negative",
+          "do_not_conflate_association_with_efficacy"
+        ]
+      },
+      {
+        "need_id": "cldn18_2_target_drug_evidence",
+        "purpose": "收集 CLDN18.2 的已知藥物靶點證據，與疾病關聯證據嚴格分開，避免誤用。",
+        "operation_search_query": "CLDN18.2 known drug target evidence",
+        "depends_on": [],
+        "entity_refs": [
+          "CLDN18.2"
+        ],
+        "required_inputs": [
+          "CLDN18.2 target ID"
+        ],
+        "outputs": [
+          "known_drug_evidence",
+          "drug_names",
+          "max_clinical_phase"
+        ],
+        "sources": [
+          "open_targets",
+          "chembl"
+        ],
+        "filters": {
+          "target": "CLDN18.2"
+        },
+        "ranking": {
+          "primary_metric": "max_clinical_phase",
+          "direction": "descending",
+          "secondary_metrics": []
+        },
+        "aggregation": null,
+        "safeguards": [
+          "target_drug_evidence_is_not_association_evidence"
+        ]
+      },
+      {
+        "need_id": "cldn18_2_tractability_evidence",
+        "purpose": "收集 CLDN18.2 的可藥性證據，與疾病關聯證據嚴格分開。",
+        "operation_search_query": "CLDN18.2 tractability evidence",
+        "depends_on": [],
+        "entity_refs": [
+          "CLDN18.2"
+        ],
+        "required_inputs": [
+          "CLDN18.2 target ID"
+        ],
+        "outputs": [
+          "tractability_scores",
+          "modality_feasibility"
+        ],
+        "sources": [
+          "open_targets",
+          "chembl"
+        ],
+        "filters": {
+          "target": "CLDN18.2"
+        },
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "tractability_is_not_efficacy"
+        ]
+      }
+    ],
+    "evidence_requirements": [
+      "Open Targets target-disease association records",
+      "Europe PMC literature count",
+      "CLDN18.2 target-drug evidence",
+      "CLDN18.2 tractability evidence"
+    ],
+    "completion_criteria": [
+      "CLDN18.2–pancreatic cancer association evidence is retrieved and categorized by evidence type.",
+      "The dominant evidence type among somatic mutation, expression, and literature is identified with supporting scores and counts.",
+      "Missing evidence is explicitly labeled unknown rather than negative.",
+      "Target-drug and tractability evidence are collected separately and not conflated with association evidence."
+    ],
+    "global_safeguards": [
+      "association_is_not_efficacy",
+      "missing_evidence_is_unknown_not_negative",
+      "keep_disease_association_separate_from_translational_support",
+      "do_not_retrieve_evidence_or_name_software_operations"
+    ],
+    "characteristics": {
+      "primary": "filter_and_rank",
+      "secondary": [
+        "comparison_and_aggregation",
+        "evidence_directed"
+      ]
+    }
+  },
+  "mapping": {
+    "matches": [
+      {
+        "need_id": "open_targets_association_evidence_by_type",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_evidence_by_type",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "europe_pmc_literature_coverage",
+        "match_status": "no_equivalent",
+        "canonical_operation": null,
+        "proposed_operation_name": "retrieve_literature_coverage_by_disease_target",
+        "proposal_reason": "No operation in the table covers general literature search/counting by disease-target synonyms; retrieve_negative_publications is limited to negative/safety/efficacy-failure literature and does not provide year distribution or general coverage."
+      },
+      {
+        "need_id": "aggregate_dominant_evidence_type",
+        "match_status": "matched",
+        "canonical_operation": "compare_evidence_types",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "cldn18_2_target_drug_evidence",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_target_drugs",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "cldn18_2_tractability_evidence",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_tractability",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      }
+    ]
+  },
+  "final_plan": null,
+  "semantic_acceptance": null,
+  "strategy_duration_seconds": 95.58058279100806,
+  "mapping_duration_seconds": 42.349884958937764,
+  "total_duration_seconds": 137.93535795807838,
+  "errors": [
+    "proposed operations require human review"
+  ],
+  "corrected_model_claims": [
+    "CLDN18.2: removed unverified identity authority",
+    "pancreatic_cancer: removed unverified identity authority"
+  ],
+  "timeout_cleanup": {},
+  "evidence_collection_started": false,
+  "executed_retrieval_tools": [],
+  "generated_at": "2026-11-12T16:28:47.684111Z",
+  "program_completions": [
+    "inserted step_resolve_cldn18_2 (resolve_target) for CLDN18.2: step_cldn18_2_target_drug_evidence (retrieve_target_drugs) requires resolved_target",
+    "step_open_targets_association_evidence_by_type: added table-required safeguards ['missing_not_negative', 'provenance_pagination_truncation']",
+    "step_cldn18_2_target_drug_evidence: added table-required safeguards ['missing_not_negative', 'provenance_pagination_truncation']",
+    "step_cldn18_2_tractability_evidence: added table-required safeguards ['missing_not_negative', 'provenance_pagination_truncation', 'tractability_not_efficacy']"
+  ]
+}

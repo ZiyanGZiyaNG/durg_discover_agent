@@ -1,0 +1,378 @@
+{
+  "schema_version": "1.0",
+  "planner_mode": "staged",
+  "question": "目前用於治療胰臟癌的藥物（如 erlotinib、olaparib），它們的標的還牽涉哪些其他癌別？",
+  "acceptance_case_id": "pdac_drugs_other_cancers",
+  "status": "failed",
+  "strategy": {
+    "research_objective": "Identify drugs used for pancreatic cancer and their molecular targets, then determine which other cancer types are associated with those targets, while separating disease association from target-drug and tractability evidence before stratification.",
+    "entities": [
+      {
+        "entity_ref": "pancreatic_cancer",
+        "entity_type": "disease",
+        "mention": "胰臟癌",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      },
+      {
+        "entity_ref": "erlotinib",
+        "entity_type": "drug",
+        "mention": "erlotinib",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      },
+      {
+        "entity_ref": "olaparib",
+        "entity_type": "drug",
+        "mention": "olaparib",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      }
+    ],
+    "needs": [
+      {
+        "need_id": "pancreatic_cancer_drug_target_enumeration",
+        "purpose": "找出目前用於治療胰臟癌的藥物及其已知分子標的，建立藥物–標的對照表。",
+        "operation_search_query": "pancreatic cancer approved drug target erlotinib olaparib EGFR PARP",
+        "depends_on": [],
+        "entity_refs": [
+          "pancreatic_cancer",
+          "erlotinib",
+          "olaparib"
+        ],
+        "required_inputs": [
+          "resolved pancreatic cancer disease",
+          "resolved erlotinib drug",
+          "resolved olaparib drug"
+        ],
+        "outputs": [
+          "drug_target_pairs_for_pancreatic_cancer"
+        ],
+        "sources": [
+          "open_targets",
+          "chembl"
+        ],
+        "filters": {
+          "disease": "pancreatic cancer",
+          "drug_status": [
+            "approved",
+            "in clinical use"
+          ]
+        },
+        "ranking": null,
+        "aggregation": {
+          "group_by": [
+            "drug_id",
+            "target_id"
+          ]
+        },
+        "safeguards": [
+          "exclude preclinical-only associations unless annotated as used in pancreatic cancer",
+          "do not infer efficacy from target presence"
+        ]
+      },
+      {
+        "need_id": "target_other_cancer_association_collection",
+        "purpose": "針對步驟 1 所得標的，蒐集其與除胰臟癌外之其他癌別的疾病關聯證據，並將疾病關聯與轉譯證據分開管理。",
+        "operation_search_query": "target disease association cancer EGFR PARP1 PARP2 non pancreatic tumor",
+        "depends_on": [
+          "pancreatic_cancer_drug_target_enumeration"
+        ],
+        "entity_refs": [],
+        "required_inputs": [
+          "drug_target_pairs_for_pancreatic_cancer"
+        ],
+        "outputs": [
+          "target_cancer_association_list"
+        ],
+        "sources": [
+          "open_targets"
+        ],
+        "filters": {
+          "exclude_disease": "pancreatic cancer",
+          "disease_category": [
+            "cancer",
+            "tumor"
+          ]
+        },
+        "ranking": {
+          "primary_metric": "association_score",
+          "direction": "descending",
+          "secondary_metrics": [
+            "evidence_count",
+            "publication_count"
+          ]
+        },
+        "aggregation": {
+          "group_by": [
+            "target_id",
+            "disease_id"
+          ]
+        },
+        "safeguards": [
+          "association is not efficacy",
+          "missing evidence is unknown not negative",
+          "do not claim therapeutic benefit in other cancers"
+        ]
+      },
+      {
+        "need_id": "target_drug_evidence_collection",
+        "purpose": "蒐集每個標的已知的藥物–標的證據（不限胰臟癌），作為轉譯支持層，與疾病關聯分開管理。",
+        "operation_search_query": "target drug mechanism of action EGFR PARP inhibitor approved indications",
+        "depends_on": [
+          "pancreatic_cancer_drug_target_enumeration"
+        ],
+        "entity_refs": [],
+        "required_inputs": [
+          "drug_target_pairs_for_pancreatic_cancer"
+        ],
+        "outputs": [
+          "target_drug_evidence_list"
+        ],
+        "sources": [
+          "open_targets",
+          "chembl"
+        ],
+        "filters": {
+          "evidence_type": [
+            "known drug target",
+            "clinical trial"
+          ]
+        },
+        "ranking": {
+          "primary_metric": "drug_target_score",
+          "direction": "descending",
+          "secondary_metrics": [
+            "max_phase",
+            "indication_count"
+          ]
+        },
+        "aggregation": {
+          "group_by": [
+            "target_id"
+          ]
+        },
+        "safeguards": [
+          "tractability is not efficacy",
+          "do not infer off-label use from target-drug evidence"
+        ]
+      },
+      {
+        "need_id": "target_tractability_collection",
+        "purpose": "蒐集每個標的的可藥性證據（結構可藥性、臨床可藥性、化學探針等），供後續分層使用。",
+        "operation_search_query": "target tractability druggability EGFR PARP1 structural clinical tractability",
+        "depends_on": [
+          "pancreatic_cancer_drug_target_enumeration"
+        ],
+        "entity_refs": [],
+        "required_inputs": [
+          "drug_target_pairs_for_pancreatic_cancer"
+        ],
+        "outputs": [
+          "target_tractability_profile"
+        ],
+        "sources": [
+          "open_targets",
+          "chembl"
+        ],
+        "filters": {},
+        "ranking": {
+          "primary_metric": "tractability_score",
+          "direction": "descending",
+          "secondary_metrics": [
+            "has_ligand",
+            "has_crystal_structure"
+          ]
+        },
+        "aggregation": {
+          "group_by": [
+            "target_id"
+          ]
+        },
+        "safeguards": [
+          "missing tractability evidence is unknown not negative",
+          "tractability does not imply clinical efficacy"
+        ]
+      },
+      {
+        "need_id": "stratified_other_cancer_aggregation",
+        "purpose": "將標的–癌別關聯與藥物–標的、可藥性證據合併，按藥物與標的分層，列出除胰臟癌外的其他癌別及其證據強度。",
+        "operation_search_query": "aggregate target cancer associations by drug and tractability rank",
+        "depends_on": [
+          "target_other_cancer_association_collection",
+          "target_drug_evidence_collection",
+          "target_tractability_collection"
+        ],
+        "entity_refs": [],
+        "required_inputs": [
+          "target_cancer_association_list",
+          "target_drug_evidence_list",
+          "target_tractability_profile"
+        ],
+        "outputs": [
+          "drug_target_other_cancer_stratified_table"
+        ],
+        "sources": [],
+        "filters": {
+          "exclude_disease": "pancreatic cancer"
+        },
+        "ranking": {
+          "primary_metric": "combined_evidence_rank",
+          "direction": "descending",
+          "secondary_metrics": [
+            "association_score",
+            "tractability_score",
+            "drug_evidence_score"
+          ]
+        },
+        "aggregation": {
+          "group_by": [
+            "drug_id",
+            "target_id",
+            "disease_id"
+          ]
+        },
+        "safeguards": [
+          "label missing evidence as unknown",
+          "do not claim efficacy for other cancers",
+          "do not copy or rewrite the user's question"
+        ]
+      }
+    ],
+    "evidence_requirements": [
+      "drug–target pairs for pancreatic cancer with source and clinical status",
+      "target–disease association scores for non-pancreatic cancers",
+      "known drug–target evidence across indications",
+      "target tractability annotations"
+    ],
+    "completion_criteria": [
+      "All user-named pancreatic cancer drugs have at least one target recorded",
+      "Each target has associated non-pancreatic cancer diseases with evidence scores or is marked unknown",
+      "Target–drug and tractability evidence are collected before stratification",
+      "Final output separates disease association from translational support and labels missing evidence as unknown"
+    ],
+    "global_safeguards": [
+      "Association is not efficacy; do not infer therapeutic benefit in other cancers",
+      "Tractability is not efficacy; do not infer druggability equals clinical benefit",
+      "Missing evidence is unknown, not negative",
+      "Do not retrieve evidence or name software operations in this plan",
+      "Do not copy or rewrite the user's question"
+    ],
+    "characteristics": {
+      "primary": "filter_and_rank",
+      "secondary": [
+        "comparison_and_aggregation",
+        "evidence_directed"
+      ]
+    }
+  },
+  "mapping": {
+    "matches": [
+      {
+        "need_id": "pancreatic_cancer_drug_target_enumeration",
+        "match_status": "matched",
+        "canonical_operation": "join_disease_target_drug",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "target_other_cancer_association_collection",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_target_cancers",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "target_drug_evidence_collection",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_target_drugs",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "target_tractability_collection",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_tractability",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "stratified_other_cancer_aggregation",
+        "match_status": "matched",
+        "canonical_operation": "stratify_target_evidence_layers",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      }
+    ]
+  },
+  "final_plan": null,
+  "semantic_acceptance": {
+    "case_id": "pdac_drugs_other_cancers",
+    "passed": false,
+    "missing_entities": [],
+    "missing_capabilities": [
+      "resolve_disease_and_drugs",
+      "retrieve_disease_drugs",
+      "retrieve_drug_targets",
+      "join_cross_indication_paths"
+    ],
+    "missing_operations": [
+      "resolve_disease_and_drugs",
+      "retrieve_disease_drugs",
+      "retrieve_drug_targets",
+      "join_cross_indication_paths"
+    ],
+    "missing_dependencies": [
+      "resolve_disease_and_drugs->retrieve_disease_drugs",
+      "retrieve_disease_drugs->retrieve_drug_targets",
+      "retrieve_drug_targets->retrieve_target_cancers",
+      "retrieve_target_cancers->join_cross_indication_paths"
+    ],
+    "missing_sources": [],
+    "missing_safeguards": [
+      "approval_requires_explicit_source",
+      "association_does_not_imply_indication"
+    ],
+    "missing_filters": [
+      "cancer_only",
+      "exclude_index_disease"
+    ],
+    "missing_ranking": [],
+    "missing_aggregation": [
+      "group_by_drug_and_target"
+    ],
+    "forbidden_findings": [],
+    "optional_capabilities_present": [],
+    "accepted_capabilities": [
+      "retrieve_target_cancers"
+    ],
+    "actual_operations": [
+      "join_disease_target_drug",
+      "retrieve_target_cancers",
+      "retrieve_target_drugs",
+      "retrieve_tractability",
+      "stratify_target_evidence_layers"
+    ],
+    "unrecognized_operations": [],
+    "proposed_operations": []
+  },
+  "strategy_duration_seconds": 34.61680079251528,
+  "mapping_duration_seconds": 39.31614320818335,
+  "total_duration_seconds": 73.93622050061822,
+  "errors": [
+    "compiled plan failed hidden semantic acceptance"
+  ],
+  "corrected_model_claims": [],
+  "timeout_cleanup": {},
+  "evidence_collection_started": false,
+  "executed_retrieval_tools": [],
+  "generated_at": "2026-11-12T16:33:45.060922Z",
+  "program_completions": [
+    "step_target_other_cancer_association_collection: added table-required safeguards ['missing_not_negative', 'provenance_pagination_truncation']",
+    "step_target_drug_evidence_collection: added table-required safeguards ['missing_not_negative', 'provenance_pagination_truncation']",
+    "step_target_tractability_collection: added table-required safeguards ['missing_not_negative', 'provenance_pagination_truncation', 'tractability_not_efficacy']"
+  ]
+}

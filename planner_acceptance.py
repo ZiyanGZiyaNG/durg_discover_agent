@@ -293,7 +293,7 @@ _OPERATION_CONTRACTS: dict[str, dict] = {
     "retrieve_drug_targets": {"requires_all": ["resolved_drug"], "provides": ["target_drug_evidence"]},
     "check_indication": {"requires_all": ["approval_evidence"], "provides": ["indication_check"], "required_safeguards": ["approval_requires_explicit_source", "database_approval_requires_official_confirmation", "missing_not_negative"]},
     "retrieve_tractability": {"requires_any": ["resolved_target", "target_candidates"], "provides": ["tractability_evidence"], "required_safeguards": ["tractability_not_efficacy"]},
-    "retrieve_approved_indications": {"provides": ["approval_evidence"]},
+    "retrieve_approved_indications": {"requires_all": ["resolved_drug"], "provides": ["approval_evidence"], "supported_filters": ["approval_status"]},
     "retrieve_clinical_trials": {"provides": ["clinical_trial_evidence"]},
     "retrieve_clinical_stage": {"provides": ["clinical_stage_evidence"]},
     "retrieve_safety_evidence": {"requires_any": ["resolved_target", "target_candidates"], "provides": ["safety_evidence"]},

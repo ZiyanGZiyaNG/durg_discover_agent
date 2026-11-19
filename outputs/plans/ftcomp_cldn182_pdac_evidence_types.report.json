@@ -1,0 +1,330 @@
+{
+  "schema_version": "1.0",
+  "planner_mode": "staged",
+  "question": "CLDN18.2 與胰臟癌的關聯，主要來自哪類證據？體細胞突變、表現量資料還是文獻？",
+  "acceptance_case_id": "cldn182_pdac_evidence_types",
+  "status": "pending_human_review",
+  "strategy": {
+    "research_objective": "Determine whether the CLDN18.2–pancreatic cancer association is primarily supported by somatic mutation evidence, expression data, or literature, and rank the evidence types by quantity and quality.",
+    "entities": [
+      {
+        "entity_ref": "CLDN18.2",
+        "entity_type": "target",
+        "mention": "CLDN18.2",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      },
+      {
+        "entity_ref": "胰臟癌",
+        "entity_type": "disease",
+        "mention": "胰臟癌",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      }
+    ],
+    "needs": [
+      {
+        "need_id": "resolve_cldn18_2_and_pancreatic_cancer_identifiers",
+        "purpose": "將 CLDN18.2 與胰臟癌標準化為可檢索的實體識別碼，以便後續證據查詢。",
+        "operation_search_query": "CLDN18.2 target identifier and pancreatic cancer disease identifier resolution in Open Targets",
+        "depends_on": [],
+        "entity_refs": [
+          "CLDN18.2",
+          "胰臟癌"
+        ],
+        "required_inputs": [
+          "user mention CLDN18.2",
+          "user mention 胰臟癌"
+        ],
+        "outputs": [
+          "claudin_18_2_entity_id",
+          "pancreatic_cancer_disease_id",
+          "resolution_status_report"
+        ],
+        "sources": [
+          "open_targets"
+        ],
+        "filters": {
+          "target_name": "CLDN18",
+          "disease_name": "pancreatic cancer"
+        },
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "do not infer isoform-specific evidence without explicit source support"
+        ]
+      },
+      {
+        "need_id": "somatic_mutation_evidence_query",
+        "purpose": "檢索 CLDN18.2 在胰臟癌中的體細胞突變證據，包括突變頻率與顯著性。",
+        "operation_search_query": "CLDN18 somatic mutation pancreatic cancer Open Targets genetics",
+        "depends_on": [
+          "resolve_cldn18_2_and_pancreatic_cancer_identifiers"
+        ],
+        "entity_refs": [
+          "CLDN18.2",
+          "胰臟癌"
+        ],
+        "required_inputs": [
+          "claudin_18_2_entity_id",
+          "pancreatic_cancer_disease_id"
+        ],
+        "outputs": [
+          "somatic_mutation_evidence_list",
+          "mutation_frequency",
+          "mutation_significance"
+        ],
+        "sources": [
+          "open_targets"
+        ],
+        "filters": {
+          "evidence_type": "somatic_mutation",
+          "disease": "pancreatic_cancer",
+          "target": "CLDN18"
+        },
+        "ranking": {
+          "primary_metric": "mutation_frequency",
+          "direction": "descending",
+          "secondary_metrics": [
+            "significance_score"
+          ]
+        },
+        "aggregation": {
+          "group_by": "evidence_source",
+          "metric": "count"
+        },
+        "safeguards": [
+          "do not equate mutation presence with target association strength",
+          "missing mutation data is unknown, not negative"
+        ]
+      },
+      {
+        "need_id": "expression_evidence_query",
+        "purpose": "檢索 CLDN18.2 在胰臟癌組織中的表現量證據，包括腫瘤與正常組織比較。",
+        "operation_search_query": "CLDN18 expression pancreatic cancer Open Targets expression",
+        "depends_on": [
+          "resolve_cldn18_2_and_pancreatic_cancer_identifiers"
+        ],
+        "entity_refs": [
+          "CLDN18.2",
+          "胰臟癌"
+        ],
+        "required_inputs": [
+          "claudin_18_2_entity_id",
+          "pancreatic_cancer_disease_id"
+        ],
+        "outputs": [
+          "expression_evidence_list",
+          "tumor_vs_normal_fold_change",
+          "expression_specificity"
+        ],
+        "sources": [
+          "open_targets"
+        ],
+        "filters": {
+          "evidence_type": "expression",
+          "disease": "pancreatic_cancer",
+          "target": "CLDN18",
+          "tissue": "pancreas"
+        },
+        "ranking": {
+          "primary_metric": "expression_score",
+          "direction": "descending",
+          "secondary_metrics": [
+            "specificity_score"
+          ]
+        },
+        "aggregation": {
+          "group_by": "data_source",
+          "metric": "max_expression_score"
+        },
+        "safeguards": [
+          "do not infer protein-level CLDN18.2 specificity from mRNA expression alone",
+          "missing expression data is unknown, not negative"
+        ]
+      },
+      {
+        "need_id": "literature_evidence_query",
+        "purpose": "檢索關於 CLDN18.2 與胰臟癌關聯的文獻證據，包括研究類型與樣本量。",
+        "operation_search_query": "CLDN18.2 pancreatic cancer association literature Europe PMC",
+        "depends_on": [
+          "resolve_cldn18_2_and_pancreatic_cancer_identifiers"
+        ],
+        "entity_refs": [
+          "CLDN18.2",
+          "胰臟癌"
+        ],
+        "required_inputs": [
+          "claudin_18_2_entity_id",
+          "pancreatic_cancer_disease_id"
+        ],
+        "outputs": [
+          "literature_evidence_list",
+          "study_types",
+          "sample_sizes",
+          "pmid_list"
+        ],
+        "sources": [
+          "europe_pmc"
+        ],
+        "filters": {
+          "disease": "pancreatic_cancer",
+          "target": "CLDN18.2",
+          "publication_type": [
+            "research_article",
+            "review"
+          ]
+        },
+        "ranking": {
+          "primary_metric": "citation_count",
+          "direction": "descending",
+          "secondary_metrics": [
+            "publication_date"
+          ]
+        },
+        "aggregation": {
+          "group_by": "study_type",
+          "metric": "count"
+        },
+        "safeguards": [
+          "do not treat literature volume as evidence strength without critical appraisal",
+          "prefer primary research over reviews for association claims"
+        ]
+      },
+      {
+        "need_id": "evidence_source_comparison_and_ranking",
+        "purpose": "整合體細胞突變、表現量與文獻三類證據，比較其數量、品質與關聯強度，判斷主要來源。",
+        "operation_search_query": "compare somatic mutation expression literature evidence for CLDN18 pancreatic cancer association",
+        "depends_on": [
+          "somatic_mutation_evidence_query",
+          "expression_evidence_query",
+          "literature_evidence_query"
+        ],
+        "entity_refs": [
+          "CLDN18.2",
+          "胰臟癌"
+        ],
+        "required_inputs": [
+          "somatic_mutation_evidence_list",
+          "expression_evidence_list",
+          "literature_evidence_list"
+        ],
+        "outputs": [
+          "evidence_source_comparison_table",
+          "dominant_evidence_type",
+          "confidence_assessment"
+        ],
+        "sources": [],
+        "filters": {},
+        "ranking": {
+          "primary_metric": "evidence_count_weighted_by_quality",
+          "direction": "descending",
+          "secondary_metrics": [
+            "association_strength"
+          ]
+        },
+        "aggregation": {
+          "group_by": "evidence_type",
+          "metrics": [
+            "count",
+            "max_score",
+            "median_score"
+          ]
+        },
+        "safeguards": [
+          "association is not efficacy",
+          "tractability is not efficacy",
+          "missing evidence is unknown rather than negative",
+          "do not overstate isoform-specific claims if evidence is at gene level"
+        ]
+      }
+    ],
+    "evidence_requirements": [
+      "somatic mutation frequency and significance for CLDN18 in pancreatic cancer",
+      "expression level comparison of CLDN18 between pancreatic tumor and normal tissue",
+      "peer-reviewed literature reporting CLDN18.2–pancreatic cancer association",
+      "entity resolution mapping CLDN18.2 to CLDN18 gene and pancreatic cancer to disease ontology"
+    ],
+    "completion_criteria": [
+      "All three evidence types (somatic mutation, expression, literature) have been queried and outputs recorded.",
+      "A comparison table ranks evidence types by count and quality.",
+      "The dominant evidence type is identified with a confidence assessment.",
+      "Limitations regarding isoform specificity and missing data are documented."
+    ],
+    "global_safeguards": [
+      "Association is not efficacy; do not infer therapeutic benefit from target–disease association.",
+      "Tractability is not efficacy; do not infer druggability from association evidence.",
+      "Missing evidence is unknown rather than negative.",
+      "Do not name or guess internal software operations; describe only data requirements and outputs.",
+      "Do not copy or rewrite the user's original question."
+    ],
+    "characteristics": {
+      "primary": "comparison_and_aggregation",
+      "secondary": [
+        "evidence_directed",
+        "filter_and_rank",
+        "safety_and_negative_knowledge"
+      ]
+    }
+  },
+  "mapping": {
+    "matches": [
+      {
+        "need_id": "resolve_cldn18_2_and_pancreatic_cancer_identifiers",
+        "match_status": "matched",
+        "canonical_operation": "resolve_disease_target",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "somatic_mutation_evidence_query",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_genetic_and_somatic_evidence",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "expression_evidence_query",
+        "match_status": "no_equivalent",
+        "canonical_operation": null,
+        "proposed_operation_name": "retrieve_disease_target_expression",
+        "proposal_reason": "No operation retrieves target expression in a specific disease tissue with tumor-vs-normal comparison; retrieve_normal_tissue_expression only covers normal tissue."
+      },
+      {
+        "need_id": "literature_evidence_query",
+        "match_status": "no_equivalent",
+        "canonical_operation": null,
+        "proposed_operation_name": "retrieve_literature_evidence",
+        "proposal_reason": "No operation retrieves general literature evidence with study types, sample sizes, and PMID lists for a disease-target pair; retrieve_negative_publications is limited to negative reports."
+      },
+      {
+        "need_id": "evidence_source_comparison_and_ranking",
+        "match_status": "matched",
+        "canonical_operation": "compare_evidence_types",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      }
+    ]
+  },
+  "final_plan": null,
+  "semantic_acceptance": null,
+  "strategy_duration_seconds": 82.56725954078138,
+  "mapping_duration_seconds": 34.01677362527698,
+  "total_duration_seconds": 116.58997920807451,
+  "errors": [
+    "proposed operations require human review"
+  ],
+  "corrected_model_claims": [
+    "CLDN18.2: removed unverified identity authority",
+    "胰臟癌: removed unverified identity authority"
+  ],
+  "timeout_cleanup": {},
+  "evidence_collection_started": false,
+  "executed_retrieval_tools": [],
+  "generated_at": "2026-11-06T16:42:13.255652Z",
+  "program_completions": [
+    "step_somatic_mutation_evidence_query: added table-required safeguards ['missing_not_negative', 'provenance_pagination_truncation']"
+  ]
+}

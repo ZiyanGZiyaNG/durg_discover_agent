@@ -1,0 +1,330 @@
+{
+  "schema_version": "1.0",
+  "planner_mode": "staged",
+  "question": "KRAS 與哪些疾病有關聯？證據強度如何？胰臟癌是不是關聯最強的？",
+  "acceptance_case_id": "kras_associated_diseases",
+  "status": "failed",
+  "strategy": {
+    "research_objective": "Map KRAS-disease associations, quantify evidence strength, collect KRAS target-drug and tractability evidence, and determine whether pancreatic cancer has the strongest KRAS association.",
+    "entities": [
+      {
+        "entity_ref": "KRAS",
+        "entity_type": "target",
+        "mention": "KRAS",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      },
+      {
+        "entity_ref": "pancreatic_cancer",
+        "entity_type": "disease",
+        "mention": "胰臟癌",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      }
+    ],
+    "needs": [
+      {
+        "need_id": "retrieve_kras_disease_associations",
+        "purpose": "從 Open Targets 檢索 KRAS 與所有相關疾病的關聯記錄，並擷取每條關聯的證據強度分數與支撐數據類型",
+        "operation_search_query": "KRAS disease association evidence strength Open Targets Platform",
+        "depends_on": [],
+        "entity_refs": [
+          "KRAS"
+        ],
+        "required_inputs": [
+          "KRAS target identifier",
+          "Open Targets disease association schema"
+        ],
+        "outputs": [
+          "kras_disease_association_raw",
+          "disease_evidence_strength_scores",
+          "association_data_types"
+        ],
+        "sources": [
+          "open_targets"
+        ],
+        "filters": {
+          "target": "KRAS",
+          "datasource": [
+            "genetic_association",
+            "somatic_mutation",
+            "drug_literature",
+            "text_mining"
+          ]
+        },
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "限於人類數據",
+          "使用標準疾病本體標籤",
+          "避免重複計算同一疾病的多條記錄"
+        ]
+      },
+      {
+        "need_id": "retrieve_kras_target_drug_evidence",
+        "purpose": "收集 KRAS 作為治療標靶的已知藥物證據，包括藥物名稱、作用機制、適應症與臨床試驗狀態",
+        "operation_search_query": "KRAS target drug evidence ChEMBL clinical trials Open Targets",
+        "depends_on": [],
+        "entity_refs": [
+          "KRAS"
+        ],
+        "required_inputs": [
+          "KRAS target identifier",
+          "ChEMBL drug mechanism schema",
+          "ClinicalTrials.gov trial schema"
+        ],
+        "outputs": [
+          "kras_target_drug_evidence_raw",
+          "drug_indication_pairs",
+          "clinical_trial_status_summary"
+        ],
+        "sources": [
+          "open_targets",
+          "chembl",
+          "clinicaltrials_gov"
+        ],
+        "filters": {
+          "target": "KRAS",
+          "modality": [
+            "small_molecule",
+            "siRNA",
+            "antibody"
+          ]
+        },
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "區分核准藥物與研究中藥物",
+          "不將藥物證據誤讀為疾病關聯強度"
+        ]
+      },
+      {
+        "need_id": "retrieve_kras_tractability_evidence",
+        "purpose": "收集 KRAS 的可藥性證據，包括結構可藥性分類、已知結合位點與化學探針資料",
+        "operation_search_query": "KRAS tractability druggability structural binding site chemical probe",
+        "depends_on": [],
+        "entity_refs": [
+          "KRAS"
+        ],
+        "required_inputs": [
+          "KRAS target identifier",
+          "Open Targets tractability schema"
+        ],
+        "outputs": [
+          "kras_tractability_raw",
+          "druggability_classification",
+          "binding_site_evidence"
+        ],
+        "sources": [
+          "open_targets",
+          "chembl"
+        ],
+        "filters": {
+          "target": "KRAS"
+        },
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "將缺失可藥性數據視為未知，而非陰性",
+          "不將可藥性等同於療效"
+        ]
+      },
+      {
+        "need_id": "stratify_and_rank_disease_associations",
+        "purpose": "將 KRAS 疾病關聯依證據強度分級與排名，並判斷胰臟癌是否為關聯最強的疾病",
+        "operation_search_query": "rank KRAS disease associations by association score pancreatic cancer top disease",
+        "depends_on": [
+          "retrieve_kras_disease_associations",
+          "retrieve_kras_target_drug_evidence",
+          "retrieve_kras_tractability_evidence"
+        ],
+        "entity_refs": [
+          "KRAS",
+          "pancreatic_cancer"
+        ],
+        "required_inputs": [
+          "kras_disease_association_raw",
+          "kras_target_drug_evidence_raw",
+          "kras_tractability_raw"
+        ],
+        "outputs": [
+          "ranked_disease_association_list",
+          "pancreatic_cancer_rank",
+          "top_associated_disease",
+          "stratification_summary"
+        ],
+        "sources": [
+          "open_targets"
+        ],
+        "filters": {
+          "disease_ontology": "EFO",
+          "min_evidence_strength": 0.0
+        },
+        "ranking": {
+          "primary_metric": "association_score",
+          "direction": "descending",
+          "secondary_metrics": [
+            "evidence_count",
+            "data_type_diversity"
+          ]
+        },
+        "aggregation": {
+          "group_by": "disease_id",
+          "aggregate": "max_association_score",
+          "include_disease_name": true
+        },
+        "safeguards": [
+          "關聯並非療效",
+          "可藥性並非療效",
+          "缺失證據視為未知而非陰性",
+          "不從關聯單獨推斷因果關係"
+        ]
+      }
+    ],
+    "evidence_requirements": [
+      "KRAS-disease association score and supporting evidence data types",
+      "Known KRAS-targeting drugs, indications, and clinical trial status",
+      "KRAS structural and chemical tractability evidence",
+      "Disease-level aggregation of association strength for ranking"
+    ],
+    "completion_criteria": [
+      "KRAS-disease association records retrieved with evidence strength scores",
+      "KRAS target-drug and tractability evidence collected",
+      "Diseases ranked by association strength with pancreatic cancer position identified",
+      "Stratification summary distinguishes association from efficacy and tractability"
+    ],
+    "global_safeguards": [
+      "Association is not efficacy",
+      "Tractability is not efficacy",
+      "Missing evidence is unknown rather than negative",
+      "Do not infer causality from association alone"
+    ],
+    "characteristics": {
+      "primary": "filter_and_rank",
+      "secondary": [
+        "evidence_directed",
+        "comparison_and_aggregation"
+      ]
+    }
+  },
+  "operation_candidates": {
+    "retrieve_kras_disease_associations": [
+      "compare_association_evidence",
+      "retrieve_associated_diseases",
+      "resolve_disease_targets",
+      "discover_targets",
+      "retrieve_exact_pair"
+    ],
+    "retrieve_kras_target_drug_evidence": [
+      "retrieve_target_drugs",
+      "retrieve_clinical_trials",
+      "join_disease_target_drug",
+      "retrieve_drug_targets",
+      "discover_targets"
+    ],
+    "retrieve_kras_tractability_evidence": [
+      "retrieve_tractability",
+      "calculate_coverage_rates",
+      "retrieve_datasource_evidence",
+      "retrieve_target_drugs",
+      "retrieve_evidence_by_type"
+    ],
+    "stratify_and_rank_disease_associations": [
+      "retrieve_exact_pairs",
+      "rank_diseases",
+      "compare_disease_rank",
+      "retrieve_associated_diseases",
+      "retrieve_exact_pair"
+    ]
+  },
+  "mapping": {
+    "matches": [
+      {
+        "need_id": "retrieve_kras_disease_associations",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_associated_diseases",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "retrieve_kras_target_drug_evidence",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_target_drugs",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "retrieve_kras_tractability_evidence",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_tractability",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "stratify_and_rank_disease_associations",
+        "match_status": "matched",
+        "canonical_operation": "rank_diseases",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      }
+    ]
+  },
+  "final_plan": null,
+  "semantic_acceptance": {
+    "case_id": "kras_associated_diseases",
+    "passed": false,
+    "missing_entities": [],
+    "missing_capabilities": [
+      "resolve_target",
+      "compare_disease_rank"
+    ],
+    "missing_operations": [
+      "resolve_target",
+      "compare_disease_rank"
+    ],
+    "missing_dependencies": [
+      "resolve_target->retrieve_associated_diseases",
+      "rank_diseases->compare_disease_rank"
+    ],
+    "missing_sources": [],
+    "missing_safeguards": [
+      "association_score_not_probability",
+      "provenance_pagination_truncation"
+    ],
+    "missing_filters": [],
+    "missing_ranking": [],
+    "missing_aggregation": [
+      "disease_relative_rank"
+    ],
+    "forbidden_findings": [],
+    "optional_capabilities_present": [],
+    "accepted_capabilities": [
+      "rank_diseases",
+      "retrieve_associated_diseases"
+    ],
+    "actual_operations": [
+      "rank_diseases",
+      "retrieve_associated_diseases",
+      "retrieve_target_drugs",
+      "retrieve_tractability"
+    ],
+    "unrecognized_operations": [],
+    "proposed_operations": []
+  },
+  "strategy_duration_seconds": 65.87314124964178,
+  "mapping_duration_seconds": 37.5690743336454,
+  "total_duration_seconds": 103.47002733312547,
+  "errors": [
+    "compiled plan failed hidden semantic acceptance"
+  ],
+  "corrected_model_claims": [
+    "KRAS: removed unverified identity authority",
+    "pancreatic_cancer: removed unverified identity authority"
+  ],
+  "timeout_cleanup": {},
+  "evidence_collection_started": false,
+  "executed_retrieval_tools": [],
+  "generated_at": "2026-11-05T14:33:58.178940Z"
+}

@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "planner_mode": "staged",
+  "question": "列出與胰臟癌關聯分數 > 0.7、且具有已知小分子結合口袋（tractability）的標的。",
+  "acceptance_case_id": "pdac_score_tractability_filter",
+  "status": "failed",
+  "strategy": null,
+  "operation_candidates": {},
+  "mapping": null,
+  "final_plan": null,
+  "semantic_acceptance": null,
+  "strategy_duration_seconds": null,
+  "mapping_duration_seconds": null,
+  "total_duration_seconds": 1.394407458603382,
+  "errors": [
+    "OpenAIConnectionError: Connection error."
+  ],
+  "corrected_model_claims": [],
+  "program_completions": [],
+  "timeout_cleanup": {},
+  "evidence_collection_started": false,
+  "executed_retrieval_tools": [],
+  "generated_at": "2026-11-05T14:52:51.886607Z"
+}

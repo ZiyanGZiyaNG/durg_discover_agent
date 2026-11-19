@@ -1,0 +1,359 @@
+{
+  "schema_version": "1.0",
+  "planner_mode": "staged",
+  "question": "KRAS 與哪些疾病有關聯？證據強度如何？胰臟癌是不是關聯最強的？",
+  "acceptance_case_id": "kras_associated_diseases",
+  "status": "pending_human_review",
+  "strategy": {
+    "research_objective": "規劃 KRAS 與人類疾病的關聯證據蒐集、證據強度排序，並判斷胰臟癌是否為關聯最強疾病；同時將標的-藥物與可藥性證據與疾病關聯分開，避免將關聯誤認為療效。",
+    "entities": [
+      {
+        "entity_ref": "KRAS",
+        "entity_type": "target",
+        "mention": "KRAS",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      }
+    ],
+    "needs": [
+      {
+        "need_id": "resolve_kras_entity",
+        "purpose": "確認 KRAS 為人類基因/蛋白標的並取得標準識別碼（如 Ensembl gene ID、UniProt ID），避免與同名偽基因或其他物種混淆。",
+        "operation_search_query": "KRAS human gene target canonical identifier Open Targets ChEMBL",
+        "depends_on": [],
+        "entity_refs": [
+          "KRAS"
+        ],
+        "required_inputs": [
+          "KRAS mention"
+        ],
+        "outputs": [
+          "kras_canonical_id",
+          "kras_entity_type",
+          "resolution_status"
+        ],
+        "sources": [
+          "open_targets",
+          "chembl"
+        ],
+        "filters": {
+          "species": "Homo sapiens",
+          "entity_type": "target"
+        },
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "require human species",
+          "reject non-human KRAS homologs",
+          "do not assume KRAS refers only to oncogenic isoform without verification"
+        ]
+      },
+      {
+        "need_id": "retrieve_kras_disease_associations",
+        "purpose": "從 Open Targets 擷取 KRAS 與所有人類疾病的關聯記錄，包含關聯分數、證據數量、證據類型（如生殖細胞變異、體細胞變異、文獻、動物模型、已知藥物）與疾病標準識別碼（EFO/Orphanet）。",
+        "operation_search_query": "KRAS disease association Open Targets evidence score data types disease ID",
+        "depends_on": [
+          "resolve_kras_entity"
+        ],
+        "entity_refs": [
+          "KRAS"
+        ],
+        "required_inputs": [
+          "kras_canonical_id"
+        ],
+        "outputs": [
+          "kras_disease_association_records"
+        ],
+        "sources": [
+          "open_targets"
+        ],
+        "filters": {
+          "target_id": "kras_canonical_id",
+          "exclude_deprecated_disease_terms": true,
+          "require_non_null_score": true
+        },
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "exclude withdrawn or deprecated disease terms",
+          "require non-null association score",
+          "do not treat literature mention alone as confirmed association without score"
+        ]
+      },
+      {
+        "need_id": "rank_kras_disease_associations",
+        "purpose": "以關聯分數為主排序 KRAS 相關疾病，並以證據數量與證據類型多樣性為次要指標，判斷胰臟癌是否為關聯最強疾病。",
+        "operation_search_query": "rank KRAS disease associations by association score evidence count evidence type diversity",
+        "depends_on": [
+          "retrieve_kras_disease_associations"
+        ],
+        "entity_refs": [
+          "KRAS"
+        ],
+        "required_inputs": [
+          "kras_disease_association_records"
+        ],
+        "outputs": [
+          "ranked_kras_disease_list",
+          "pancreatic_cancer_rank",
+          "top_associated_disease"
+        ],
+        "sources": [],
+        "filters": {
+          "min_evidence_count": 1
+        },
+        "ranking": {
+          "primary_metric": "association_score",
+          "direction": "descending",
+          "secondary_metrics": [
+            "evidence_count",
+            "evidence_type_diversity"
+          ]
+        },
+        "aggregation": {
+          "group_by": "disease_id",
+          "aggregate": [
+            "max_association_score",
+            "sum_evidence_count",
+            "list_evidence_types",
+            "list_data_sources"
+          ]
+        },
+        "safeguards": [
+          "do not infer causality from association score",
+          "missing evidence is unknown not negative",
+          "association strength is not drug efficacy"
+        ]
+      },
+      {
+        "need_id": "collect_kras_target_drug_evidence",
+        "purpose": "蒐集 KRAS 的已知標的-藥物證據（批准藥物、臨床試驗化合物），與疾病關聯分析分開，不參與疾病關聯強度排序。",
+        "operation_search_query": "KRAS target drug evidence ChEMBL Open Targets known drugs",
+        "depends_on": [
+          "resolve_kras_entity"
+        ],
+        "entity_refs": [
+          "KRAS"
+        ],
+        "required_inputs": [
+          "kras_canonical_id"
+        ],
+        "outputs": [
+          "kras_target_drug_records"
+        ],
+        "sources": [
+          "chembl",
+          "open_targets"
+        ],
+        "filters": {
+          "target_id": "kras_canonical_id"
+        },
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "target-drug evidence is not disease association evidence",
+          "do not use drug evidence to rank disease associations"
+        ]
+      },
+      {
+        "need_id": "collect_kras_tractability_evidence",
+        "purpose": "蒐集 KRAS 的可藥性證據（結構、生物化學、細胞活性等），與疾病關聯分析分開。",
+        "operation_search_query": "KRAS tractability evidence Open Targets ChEMBL",
+        "depends_on": [
+          "resolve_kras_entity"
+        ],
+        "entity_refs": [
+          "KRAS"
+        ],
+        "required_inputs": [
+          "kras_canonical_id"
+        ],
+        "outputs": [
+          "kras_tractability_records"
+        ],
+        "sources": [
+          "open_targets",
+          "chembl"
+        ],
+        "filters": {
+          "target_id": "kras_canonical_id"
+        },
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "tractability is not efficacy",
+          "missing tractability evidence is unknown not negative"
+        ]
+      },
+      {
+        "need_id": "synthesize_final_answer",
+        "purpose": "整合疾病關聯排序與分開蒐集的翻譯支持證據，輸出最終回答：KRAS 關聯疾病清單、證據強度、胰臟癌是否為最強關聯，並明確標示關聯不等於療效。",
+        "operation_search_query": "synthesize KRAS disease association summary pancreatic cancer rank translational support separate",
+        "depends_on": [
+          "rank_kras_disease_associations",
+          "collect_kras_target_drug_evidence",
+          "collect_kras_tractability_evidence"
+        ],
+        "entity_refs": [
+          "KRAS"
+        ],
+        "required_inputs": [
+          "ranked_kras_disease_list",
+          "pancreatic_cancer_rank",
+          "top_associated_disease",
+          "kras_target_drug_records",
+          "kras_tractability_records"
+        ],
+        "outputs": [
+          "final_disease_association_summary",
+          "pancreatic_cancer_is_strongest_boolean",
+          "evidence_strength_interpretation",
+          "translational_support_separate_section"
+        ],
+        "sources": [],
+        "filters": {},
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "clearly separate disease association from translational support",
+          "state that pancreatic cancer ranking is based on association score only",
+          "do not claim therapeutic benefit from association"
+        ]
+      }
+    ],
+    "evidence_requirements": [
+      "Open Targets target-disease association scores for KRAS",
+      "Evidence type and evidence count per KRAS-disease pair",
+      "Disease identifiers (EFO/Orphanet) and disease names",
+      "Known drug modality and clinical phase for KRAS (translational support, separate)",
+      "Tractability classification for KRAS (translational support, separate)"
+    ],
+    "completion_criteria": [
+      "KRAS 解析為人類標準目標識別碼",
+      "擷取所有 KRAS-疾病關聯記錄，包含關聯分數與證據中繼資料",
+      "依關聯強度排序疾病，並明確指出胰臟癌的排名",
+      "標的-藥物與可藥性證據分別蒐集，未與疾病關聯強度混用",
+      "最終輸出說明胰臟癌是否為關聯最強疾病，並註明關聯不等於療效"
+    ],
+    "global_safeguards": [
+      "本階段僅規劃研究，不執行證據擷取",
+      "不命名或猜測軟體操作",
+      "缺失證據視為未知，而非陰性",
+      "關聯強度不等於藥物療效",
+      "可藥性不等於療效",
+      "排除非人類 KRAS 記錄"
+    ],
+    "characteristics": {
+      "primary": "filter_and_rank",
+      "secondary": [
+        "evidence_directed",
+        "comparison_and_aggregation",
+        "safety_and_negative_knowledge"
+      ]
+    }
+  },
+  "operation_candidates": {
+    "resolve_kras_entity": [
+      "discover_targets",
+      "retrieve_target_drugs",
+      "join_disease_target_drug",
+      "retrieve_exact_pairs",
+      "retrieve_exact_pair"
+    ],
+    "retrieve_kras_disease_associations": [
+      "compare_association_evidence",
+      "resolve_disease_targets",
+      "compare_evidence_types",
+      "retrieve_exact_pair",
+      "discover_targets_per_disease"
+    ],
+    "rank_kras_disease_associations": [
+      "retrieve_evidence_by_type",
+      "compare_association_evidence",
+      "retrieve_exact_pairs",
+      "compare_disease_rank",
+      "retrieve_exact_pair"
+    ],
+    "collect_kras_target_drug_evidence": [
+      "retrieve_target_drugs",
+      "join_disease_target_drug",
+      "discover_targets",
+      "retrieve_drug_targets",
+      "stratify_target_evidence_layers"
+    ],
+    "collect_kras_tractability_evidence": [
+      "retrieve_tractability",
+      "retrieve_target_drugs",
+      "resolve_disease_targets",
+      "classify_kinase_targets",
+      "discover_targets"
+    ],
+    "synthesize_final_answer": [
+      "compare_disease_rank",
+      "retrieve_exact_pair",
+      "join_disease_target_drug",
+      "filter_phase2_not_approved_for_disease",
+      "resolve_disease_targets"
+    ]
+  },
+  "mapping": {
+    "matches": [
+      {
+        "need_id": "resolve_kras_entity",
+        "match_status": "no_equivalent",
+        "canonical_operation": null,
+        "proposed_operation_name": "resolve_gene_entity",
+        "proposal_reason": "所有候選僅處理疾病-標的或標的-藥物關聯與精確配對查詢，無任何操作負責將 KRAS 提及解析為人類基因/蛋白標準識別碼（如 Ensembl、UniProt）並排除偽基因或其他物種。"
+      },
+      {
+        "need_id": "retrieve_kras_disease_associations",
+        "match_status": "no_equivalent",
+        "canonical_operation": null,
+        "proposed_operation_name": "retrieve_target_disease_associations",
+        "proposal_reason": "候選操作方向多為疾病→標的（discover_targets_per_disease）、證據比較或單一疾病-標的精確查詢，無操作以單一標的 ID 擷取其與所有人類疾病的關聯記錄（含分數、證據數、證據類型、疾病標準 ID）。"
+      },
+      {
+        "need_id": "rank_kras_disease_associations",
+        "match_status": "no_equivalent",
+        "canonical_operation": null,
+        "proposed_operation_name": "rank_disease_associations",
+        "proposal_reason": "候選僅有 compare_disease_rank 可檢查指定疾病在已排序清單中的相對位置，但無操作能以關聯分數為主、證據數量與類型多樣性為次對所有 KRAS-疾病關聯進行排序並產生排名清單。"
+      },
+      {
+        "need_id": "collect_kras_target_drug_evidence",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_target_drugs",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "collect_kras_tractability_evidence",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_tractability",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "synthesize_final_answer",
+        "match_status": "no_equivalent",
+        "canonical_operation": null,
+        "proposed_operation_name": "synthesize_final_answer",
+        "proposal_reason": "候選操作僅涉及疾病排名檢查、單一關聯查詢、疾病-標的-藥物邊連接、藥物篩選或疾病標的解析，無操作能整合已排序疾病清單、標的-藥物證據與可藥性證據，輸出最終關聯摘要、胰臟癌是否最強布林值、證據強度解釋與分開的轉譯支持章節。"
+      }
+    ]
+  },
+  "final_plan": null,
+  "semantic_acceptance": null,
+  "strategy_duration_seconds": 63.368826917372644,
+  "mapping_duration_seconds": 24.034692709334195,
+  "total_duration_seconds": 87.43739016726613,
+  "errors": [
+    "proposed operations require human review"
+  ],
+  "corrected_model_claims": [],
+  "timeout_cleanup": {},
+  "evidence_collection_started": false,
+  "executed_retrieval_tools": [],
+  "generated_at": "2026-11-05T14:19:41.247878Z"
+}

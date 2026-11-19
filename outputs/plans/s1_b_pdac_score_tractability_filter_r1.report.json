@@ -1,0 +1,262 @@
+{
+  "schema_version": "1.0",
+  "planner_mode": "staged",
+  "question": "列出與胰臟癌關聯分數 > 0.7、且具有已知小分子結合口袋（tractability）的標的。",
+  "acceptance_case_id": "pdac_score_tractability_filter",
+  "status": "pending_human_review",
+  "strategy": {
+    "research_objective": "找出與胰臟癌關聯分數大於 0.7，且具有已知小分子結合口袋（tractability）的標的清單。",
+    "entities": [
+      {
+        "entity_ref": "pancreatic_cancer",
+        "entity_type": "disease",
+        "mention": "胰臟癌",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      }
+    ],
+    "needs": [
+      {
+        "need_id": "need_1",
+        "purpose": "獲取胰臟癌與所有標的之間的疾病-標的關聯證據及其關聯分數。",
+        "operation_search_query": "retrieve disease_target_association for disease pancreatic cancer",
+        "depends_on": [],
+        "entity_refs": [
+          "pancreatic_cancer"
+        ],
+        "required_inputs": [],
+        "outputs": [
+          "disease_target_association"
+        ],
+        "sources": [
+          "open_targets"
+        ],
+        "filters": {},
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "association_score_not_probability",
+          "missing_not_negative"
+        ],
+        "required_capabilities": [],
+        "provided_capabilities": [
+          "disease_target_association"
+        ]
+      },
+      {
+        "need_id": "need_2",
+        "purpose": "將疾病-標的關聯依關聯分數大於 0.7 進行篩選。",
+        "operation_search_query": "filter disease_target_association where association_score > 0.7",
+        "depends_on": [
+          "need_1"
+        ],
+        "entity_refs": [],
+        "required_inputs": [
+          "disease_target_association"
+        ],
+        "outputs": [
+          "disease_target_association"
+        ],
+        "sources": [],
+        "filters": {
+          "association_score_gt": 0.7
+        },
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "association_score_not_probability",
+          "missing_not_negative"
+        ],
+        "required_capabilities": [
+          "disease_target_association"
+        ],
+        "provided_capabilities": [
+          "disease_target_association"
+        ]
+      },
+      {
+        "need_id": "need_3",
+        "purpose": "獲取經篩選標的的可成藥性證據，特別是已知小分子結合口袋。",
+        "operation_search_query": "retrieve tractability_evidence for targets from need_2",
+        "depends_on": [
+          "need_2"
+        ],
+        "entity_refs": [],
+        "required_inputs": [
+          "disease_target_association"
+        ],
+        "outputs": [
+          "tractability_evidence"
+        ],
+        "sources": [
+          "open_targets",
+          "chembl"
+        ],
+        "filters": {},
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "tractability_not_efficacy",
+          "missing_not_negative"
+        ],
+        "required_capabilities": [
+          "disease_target_association"
+        ],
+        "provided_capabilities": [
+          "tractability_evidence"
+        ]
+      },
+      {
+        "need_id": "need_4",
+        "purpose": "將可成藥性證據篩選為僅保留具有已知小分子結合口袋的標的。",
+        "operation_search_query": "filter tractability_evidence where small_molecule_binding_pocket = true",
+        "depends_on": [
+          "need_3"
+        ],
+        "entity_refs": [],
+        "required_inputs": [
+          "tractability_evidence"
+        ],
+        "outputs": [
+          "tractability_evidence"
+        ],
+        "sources": [],
+        "filters": {
+          "modality": "small_molecule",
+          "binding_pocket_known": true
+        },
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "tractability_not_efficacy",
+          "missing_not_negative"
+        ],
+        "required_capabilities": [
+          "tractability_evidence"
+        ],
+        "provided_capabilities": [
+          "tractability_evidence"
+        ]
+      },
+      {
+        "need_id": "need_5",
+        "purpose": "將高關聯分數標的與具小分子結合口袋標的取交集，產生最終標的候選清單。",
+        "operation_search_query": "intersect targets from need_2 and need_4",
+        "depends_on": [
+          "need_2",
+          "need_4"
+        ],
+        "entity_refs": [],
+        "required_inputs": [
+          "disease_target_association",
+          "tractability_evidence"
+        ],
+        "outputs": [
+          "target_candidates"
+        ],
+        "sources": [],
+        "filters": {},
+        "ranking": {
+          "primary_metric": "association_score",
+          "direction": "descending",
+          "secondary_metrics": []
+        },
+        "aggregation": {
+          "key": "target_id",
+          "operation": "intersection"
+        },
+        "safeguards": [
+          "association_does_not_imply_efficacy",
+          "tractability_not_efficacy"
+        ],
+        "required_capabilities": [
+          "disease_target_association",
+          "tractability_evidence"
+        ],
+        "provided_capabilities": [
+          "target_candidates"
+        ]
+      }
+    ],
+    "evidence_requirements": [
+      "disease_target_association",
+      "tractability_evidence"
+    ],
+    "completion_criteria": [
+      "最終輸出包含所有符合胰臟癌關聯分數 > 0.7 且具有已知小分子結合口袋的標的，並標註其關聯分數與可成藥性證據來源。"
+    ],
+    "global_safeguards": [
+      "association_score_not_probability",
+      "missing_not_negative",
+      "tractability_not_efficacy",
+      "association_does_not_imply_efficacy"
+    ],
+    "characteristics": {
+      "primary": "multi_hop",
+      "secondary": [
+        "filter_and_rank"
+      ]
+    }
+  },
+  "mapping": {
+    "matches": [
+      {
+        "need_id": "need_1",
+        "match_status": "matched",
+        "canonical_operation": "discover_targets",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "need_2",
+        "match_status": "no_equivalent",
+        "canonical_operation": null,
+        "proposed_operation_name": "filter_disease_target_associations_by_score",
+        "proposal_reason": "No operation filters disease-target associations by a numeric score threshold. filter_targets filters targets by explicit plan conditions but does not consume disease_target_association or provide disease_target_association."
+      },
+      {
+        "need_id": "need_3",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_tractability",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "need_4",
+        "match_status": "no_equivalent",
+        "canonical_operation": null,
+        "proposed_operation_name": "filter_tractability_evidence_by_small_molecule_pocket",
+        "proposal_reason": "No operation filters tractability evidence to retain only targets with known small molecule binding pockets. filter_targets operates on targets rather than evidence."
+      },
+      {
+        "need_id": "need_5",
+        "match_status": "no_equivalent",
+        "canonical_operation": null,
+        "proposed_operation_name": "intersect_target_candidates",
+        "proposal_reason": "intersect_targets computes intersections of target sets across diseases, not intersections across evidence criteria (association score and tractability), and does not provide target_candidates."
+      }
+    ]
+  },
+  "final_plan": null,
+  "semantic_acceptance": null,
+  "strategy_duration_seconds": 36.38800520822406,
+  "mapping_duration_seconds": 75.10708279162645,
+  "total_duration_seconds": 111.49828608240932,
+  "errors": [
+    "proposed operations require human review"
+  ],
+  "corrected_model_claims": [],
+  "timeout_cleanup": {},
+  "evidence_collection_started": false,
+  "executed_retrieval_tools": [],
+  "generated_at": "2026-11-12T17:17:53.844552Z",
+  "program_completions": [
+    "step_need_3: depends on step_need_1 (requires disease_target_association)",
+    "step_need_5: depends on step_need_1 (requires disease_target_association)",
+    "step_need_5: depends on step_need_3 (requires tractability_evidence)",
+    "inserted step_resolve_pancreatic_cancer (resolve_disease) for pancreatic_cancer: step_need_1 (discover_targets) requires resolved_disease",
+    "step_need_1: added table-required safeguards ['provenance_pagination_truncation']",
+    "step_need_3: added table-required safeguards ['provenance_pagination_truncation']"
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "planner_mode": "staged",
+  "question": "CLDN18.2 與胰臟癌的關聯，主要來自哪類證據？體細胞突變、表現量資料還是文獻？",
+  "acceptance_case_id": "cldn182_pdac_evidence_types",
+  "status": "failed",
+  "strategy": null,
+  "operation_candidates": {},
+  "mapping": null,
+  "final_plan": null,
+  "semantic_acceptance": null,
+  "strategy_duration_seconds": null,
+  "mapping_duration_seconds": null,
+  "total_duration_seconds": 1.3947363747283816,
+  "errors": [
+    "OpenAIConnectionError: Connection error."
+  ],
+  "corrected_model_claims": [],
+  "program_completions": [],
+  "timeout_cleanup": {},
+  "evidence_collection_started": false,
+  "executed_retrieval_tools": [],
+  "generated_at": "2026-11-05T14:52:49.796846Z"
+}

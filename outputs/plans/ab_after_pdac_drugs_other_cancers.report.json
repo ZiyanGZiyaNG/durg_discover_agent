@@ -1,0 +1,359 @@
+{
+  "schema_version": "1.0",
+  "planner_mode": "staged",
+  "question": "目前用於治療胰臟癌的藥物（如 erlotinib、olaparib），它們的標的還牽涉哪些其他癌別？",
+  "acceptance_case_id": "pdac_drugs_other_cancers",
+  "status": "pending_human_review",
+  "strategy": {
+    "research_objective": "Map the molecular targets of erlotinib and olaparib to other cancer types beyond pancreatic cancer, stratifying by disease association, known target-drug evidence, and tractability without claiming efficacy.",
+    "entities": [
+      {
+        "entity_ref": "erlotinib",
+        "entity_type": "drug",
+        "mention": "erlotinib",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      },
+      {
+        "entity_ref": "olaparib",
+        "entity_type": "drug",
+        "mention": "olaparib",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      },
+      {
+        "entity_ref": "pancreatic_cancer",
+        "entity_type": "disease",
+        "mention": "胰臟癌",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      }
+    ],
+    "needs": [
+      {
+        "need_id": "identify_drug_targets",
+        "purpose": "查明 erlotinib 與 olaparib 的已知分子標的，以作為後續癌別關聯分析的基礎。",
+        "operation_search_query": "erlotinib olaparib target protein interaction",
+        "depends_on": [],
+        "entity_refs": [
+          "erlotinib",
+          "olaparib"
+        ],
+        "required_inputs": [
+          "drug_name_list"
+        ],
+        "outputs": [
+          "drug_target_map"
+        ],
+        "sources": [
+          "chembl",
+          "open_targets"
+        ],
+        "filters": {
+          "target_type": "protein",
+          "organism": "Homo sapiens"
+        },
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "only_collect_direct_drug_target_interactions"
+        ]
+      },
+      {
+        "need_id": "collect_target_disease_associations",
+        "purpose": "針對每個已確認標的，蒐集其與各種癌症的疾病關聯證據，區分胰臟癌與其他癌別。",
+        "operation_search_query": "target disease association cancer oncology Open Targets",
+        "depends_on": [
+          "identify_drug_targets"
+        ],
+        "entity_refs": [
+          "erlotinib",
+          "olaparib",
+          "pancreatic_cancer"
+        ],
+        "required_inputs": [
+          "drug_target_map"
+        ],
+        "outputs": [
+          "target_disease_association_data"
+        ],
+        "sources": [
+          "open_targets",
+          "europe_pmc"
+        ],
+        "filters": {
+          "disease_domain": "oncology"
+        },
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "association_is_not_efficacy",
+          "missing_evidence_is_unknown_not_negative"
+        ]
+      },
+      {
+        "need_id": "collect_target_drug_evidence",
+        "purpose": "蒐集標的與已知藥物的癌症治療證據，作為轉譯潛力參考，但不等同於療效。",
+        "operation_search_query": "known drug target cancer evidence Open Targets ChEMBL ClinicalTrials",
+        "depends_on": [
+          "collect_target_disease_associations"
+        ],
+        "entity_refs": [
+          "erlotinib",
+          "olaparib",
+          "pancreatic_cancer"
+        ],
+        "required_inputs": [
+          "target_disease_association_data"
+        ],
+        "outputs": [
+          "target_drug_evidence_matrix"
+        ],
+        "sources": [
+          "open_targets",
+          "chembl",
+          "clinicaltrials_gov"
+        ],
+        "filters": {
+          "evidence_type": "known_drug_target",
+          "disease_domain": "cancer"
+        },
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "known_target_drug_evidence_is_not_efficacy"
+        ]
+      },
+      {
+        "need_id": "collect_target_tractability",
+        "purpose": "蒐集每個標的的可藥性證據，包括結構生物學、化學探針與臨床前可成藥性資料。",
+        "operation_search_query": "target tractability druggability Open Targets ChEMBL",
+        "depends_on": [
+          "collect_target_disease_associations"
+        ],
+        "entity_refs": [
+          "erlotinib",
+          "olaparib",
+          "pancreatic_cancer"
+        ],
+        "required_inputs": [
+          "target_disease_association_data"
+        ],
+        "outputs": [
+          "target_tractability_profile"
+        ],
+        "sources": [
+          "open_targets",
+          "chembl"
+        ],
+        "filters": {},
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "tractability_is_not_efficacy"
+        ]
+      },
+      {
+        "need_id": "stratify_other_cancer_types",
+        "purpose": "將非胰臟癌的癌別依標的關聯強度、已知藥物證據與可藥性進行分層與排序，並標示證據缺口。",
+        "operation_search_query": "rank cancer types by target association score drug evidence tractability",
+        "depends_on": [
+          "collect_target_disease_associations",
+          "collect_target_drug_evidence",
+          "collect_target_tractability"
+        ],
+        "entity_refs": [
+          "erlotinib",
+          "olaparib",
+          "pancreatic_cancer"
+        ],
+        "required_inputs": [
+          "target_disease_association_data",
+          "target_drug_evidence_matrix",
+          "target_tractability_profile"
+        ],
+        "outputs": [
+          "ranked_other_cancer_list",
+          "evidence_gap_summary"
+        ],
+        "sources": [
+          "open_targets"
+        ],
+        "filters": {
+          "exclude_disease": "pancreatic_cancer"
+        },
+        "ranking": {
+          "primary_metric": "association_score",
+          "direction": "descending",
+          "secondary_metrics": [
+            "drug_evidence_count",
+            "tractability_score"
+          ]
+        },
+        "aggregation": {
+          "group_by": [
+            "target",
+            "cancer_type"
+          ],
+          "metrics": [
+            "association_score",
+            "drug_evidence_count",
+            "tractability_score"
+          ]
+        },
+        "safeguards": [
+          "do_not_claim_efficacy",
+          "label_missing_evidence_as_unknown"
+        ]
+      }
+    ],
+    "evidence_requirements": [
+      "ChEMBL or Open Targets drug-target interaction records for erlotinib and olaparib",
+      "Open Targets target-disease association scores across oncology indications",
+      "ClinicalTrials.gov or Open Targets known drug-target evidence for cancer indications",
+      "Open Targets or ChEMBL tractability annotations for each target"
+    ],
+    "completion_criteria": [
+      "All molecular targets of erlotinib and olaparib are identified with source attribution.",
+      "Disease associations for each target are collected across oncology indications, including pancreatic cancer and other cancer types.",
+      "Known target-drug evidence and tractability evidence are compiled before stratification.",
+      "Other cancer types are ranked with explicit evidence levels, and missing evidence is labeled as unknown."
+    ],
+    "global_safeguards": [
+      "Association is not efficacy; tractability is not efficacy; missing evidence is unknown rather than negative.",
+      "Do not infer unsupported drug-cancer indications beyond collected evidence."
+    ],
+    "characteristics": {
+      "primary": "multi_hop",
+      "secondary": [
+        "evidence_directed",
+        "filter_and_rank"
+      ]
+    }
+  },
+  "operation_candidates": {
+    "identify_drug_targets": [
+      "join_disease_target_drug",
+      "retrieve_drug_targets",
+      "retrieve_target_drugs",
+      "discover_targets",
+      "retrieve_exact_pair",
+      "resolve_drug",
+      "resolve_target",
+      "retrieve_disease_drugs",
+      "retrieve_exact_pairs",
+      "resolve_disease_and_drugs"
+    ],
+    "collect_target_disease_associations": [
+      "retrieve_exact_pair",
+      "retrieve_target_cancers",
+      "discover_targets",
+      "retrieve_associated_diseases",
+      "join_disease_target_drug",
+      "retrieve_exact_pairs",
+      "resolve_disease_target",
+      "resolve_disease_targets",
+      "discover_targets_per_disease",
+      "retrieve_target_drugs"
+    ],
+    "collect_target_drug_evidence": [
+      "retrieve_target_drugs",
+      "retrieve_target_cancers",
+      "stratify_target_evidence_layers",
+      "retrieve_drug_targets",
+      "discover_targets",
+      "join_disease_target_drug",
+      "resolve_drug",
+      "retrieve_exact_pairs",
+      "retrieve_disease_drugs",
+      "retrieve_exact_pair"
+    ],
+    "collect_target_tractability": [
+      "retrieve_target_drugs",
+      "retrieve_tractability",
+      "discover_targets",
+      "resolve_target",
+      "resolve_targets",
+      "compare_targets",
+      "rank_targets",
+      "retrieve_target_cancers",
+      "resolve_target_variants",
+      "filter_targets"
+    ],
+    "stratify_other_cancer_types": [
+      "compare_association_evidence",
+      "stratify_target_evidence_layers",
+      "retrieve_evidence_by_type",
+      "rank_targets",
+      "compare_evidence_types",
+      "retrieve_target_cancers",
+      "join_disease_target_drug",
+      "retrieve_exact_pair",
+      "discover_targets",
+      "retrieve_drug_targets"
+    ]
+  },
+  "mapping": {
+    "matches": [
+      {
+        "need_id": "identify_drug_targets",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_drug_targets",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "collect_target_disease_associations",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_target_cancers",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "collect_target_drug_evidence",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_target_drugs",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "collect_target_tractability",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_tractability",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "stratify_other_cancer_types",
+        "match_status": "no_equivalent",
+        "canonical_operation": null,
+        "proposed_operation_name": "stratify_cancer_types",
+        "proposal_reason": "No supplied candidate stratifies or ranks cancer types; existing operations stratify/rank targets (stratify_target_evidence_layers, rank_targets) or compare association evidence (compare_association_evidence), but none outputs a ranked non-pancreatic cancer list with evidence-gap summary."
+      }
+    ]
+  },
+  "final_plan": null,
+  "semantic_acceptance": null,
+  "strategy_duration_seconds": 109.9317709999159,
+  "mapping_duration_seconds": 54.30806758441031,
+  "total_duration_seconds": 164.27847774978727,
+  "errors": [
+    "proposed operations require human review"
+  ],
+  "corrected_model_claims": [],
+  "program_completions": [
+    "inserted step_resolve_erlotinib (resolve_drug) for erlotinib: step_identify_drug_targets (retrieve_drug_targets) requires resolved_drug",
+    "inserted step_resolve_olaparib (resolve_drug) for olaparib: step_identify_drug_targets (retrieve_drug_targets) requires resolved_drug",
+    "step_identify_drug_targets: added table-required safeguards ['missing_not_negative', 'provenance_pagination_truncation']",
+    "step_collect_target_disease_associations: added table-required safeguards ['missing_not_negative', 'provenance_pagination_truncation']",
+    "step_collect_target_drug_evidence: added table-required safeguards ['missing_not_negative', 'provenance_pagination_truncation']",
+    "step_collect_target_tractability: added table-required safeguards ['missing_not_negative', 'provenance_pagination_truncation', 'tractability_not_efficacy']"
+  ],
+  "timeout_cleanup": {},
+  "evidence_collection_started": false,
+  "executed_retrieval_tools": [],
+  "generated_at": "2026-11-05T16:33:57.468600Z"
+}

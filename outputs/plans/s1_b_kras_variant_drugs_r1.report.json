@@ -1,0 +1,251 @@
+{
+  "schema_version": "1.0",
+  "planner_mode": "staged",
+  "question": "有哪些藥物作用在 KRAS G12C／G12D 上？各自的作用機制是什麼？",
+  "acceptance_case_id": "kras_variant_drugs",
+  "status": "pending_human_review",
+  "strategy": {
+    "research_objective": "找出作用於 KRAS G12C 與 KRAS G12D 的藥物，並說明各自的作用機制，結果依變異體分開呈現。",
+    "entities": [
+      {
+        "entity_ref": "KRAS G12C",
+        "entity_type": "target",
+        "mention": "KRAS G12C",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      },
+      {
+        "entity_ref": "KRAS G12D",
+        "entity_type": "target",
+        "mention": "KRAS G12D",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      }
+    ],
+    "needs": [
+      {
+        "need_id": "retrieve_kras_target_drug_evidence",
+        "purpose": "從 Open Targets 與 ChEMBL 檢索作用於 KRAS 靶標之藥物的原始靶標-藥物證據，包含藥物名稱、靶標變異體、作用機制與證據來源。",
+        "operation_search_query": "KRAS G12C G12D drug target interaction mechanism of action",
+        "depends_on": [],
+        "entity_refs": [
+          "KRAS G12C",
+          "KRAS G12D"
+        ],
+        "required_inputs": [],
+        "outputs": [
+          "target_drug_evidence"
+        ],
+        "sources": [
+          "open_targets",
+          "chembl"
+        ],
+        "filters": {},
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "variant_specificity_required",
+          "provenance_pagination_truncation",
+          "missing_not_negative"
+        ],
+        "required_capabilities": [],
+        "provided_capabilities": [
+          "target_drug_evidence"
+        ]
+      },
+      {
+        "need_id": "stratify_kras_drug_evidence_by_variant",
+        "purpose": "將 KRAS 靶標-藥物證據依 G12C 與 G12D 變異體分層，產出各變異體對應的藥物與證據子集。",
+        "operation_search_query": "stratify KRAS drug evidence by G12C and G12D variant",
+        "depends_on": [
+          "retrieve_kras_target_drug_evidence"
+        ],
+        "entity_refs": [
+          "KRAS G12C",
+          "KRAS G12D"
+        ],
+        "required_inputs": [
+          "target_drug_evidence"
+        ],
+        "outputs": [
+          "stratified_target_evidence"
+        ],
+        "sources": [],
+        "filters": {},
+        "ranking": null,
+        "aggregation": {
+          "group_by": [
+            "variant",
+            "drug"
+          ]
+        },
+        "safeguards": [
+          "variant_specificity_required",
+          "missing_not_negative"
+        ],
+        "required_capabilities": [
+          "target_drug_evidence"
+        ],
+        "provided_capabilities": [
+          "stratified_target_evidence"
+        ]
+      },
+      {
+        "need_id": "extract_mechanism_of_action_by_drug",
+        "purpose": "從分層證據中提取每種藥物的作用機制描述（例如共價抑制、非共價抑制、GTPase 調節等），並標註證據類型與來源。",
+        "operation_search_query": "extract mechanism of action for KRAS G12C G12D inhibitors",
+        "depends_on": [
+          "stratify_kras_drug_evidence_by_variant"
+        ],
+        "entity_refs": [
+          "KRAS G12C",
+          "KRAS G12D"
+        ],
+        "required_inputs": [
+          "stratified_target_evidence"
+        ],
+        "outputs": [
+          "evidence_by_type"
+        ],
+        "sources": [],
+        "filters": {},
+        "ranking": null,
+        "aggregation": {
+          "group_by": [
+            "drug",
+            "variant",
+            "mechanism_of_action"
+          ]
+        },
+        "safeguards": [
+          "association_does_not_imply_efficacy",
+          "missing_not_negative"
+        ],
+        "required_capabilities": [
+          "stratified_target_evidence"
+        ],
+        "provided_capabilities": [
+          "evidence_by_type"
+        ]
+      },
+      {
+        "need_id": "aggregate_and_compare_kras_variant_drugs",
+        "purpose": "彙整 G12C 與 G12D 各自的藥物與作用機制清單，並正規化比較兩組證據，避免將證據缺失誤讀為無藥物。",
+        "operation_search_query": "aggregate and compare KRAS G12C versus G12D drug mechanisms",
+        "depends_on": [
+          "extract_mechanism_of_action_by_drug"
+        ],
+        "entity_refs": [
+          "KRAS G12C",
+          "KRAS G12D"
+        ],
+        "required_inputs": [
+          "evidence_by_type"
+        ],
+        "outputs": [
+          "normalized_comparison"
+        ],
+        "sources": [],
+        "filters": {},
+        "ranking": null,
+        "aggregation": {
+          "group_by": [
+            "variant"
+          ],
+          "metrics": [
+            "drug_count",
+            "mechanism_types"
+          ]
+        },
+        "safeguards": [
+          "missing_not_negative",
+          "association_does_not_imply_efficacy"
+        ],
+        "required_capabilities": [
+          "evidence_by_type"
+        ],
+        "provided_capabilities": [
+          "normalized_comparison"
+        ]
+      }
+    ],
+    "evidence_requirements": [
+      "target_drug_evidence",
+      "stratified_target_evidence",
+      "evidence_by_type",
+      "normalized_comparison"
+    ],
+    "completion_criteria": [
+      "列出所有有直接靶標-藥物證據的 KRAS G12C 藥物及其機制",
+      "列出所有有直接靶標-藥物證據的 KRAS G12D 藥物及其機制",
+      "若某變異體無證據，標記為未知而非無",
+      "證據來源與分層結果可追溯"
+    ],
+    "global_safeguards": [
+      "variant_specificity_required",
+      "missing_not_negative",
+      "provenance_pagination_truncation",
+      "association_does_not_imply_efficacy"
+    ],
+    "characteristics": {
+      "primary": "evidence_directed",
+      "secondary": [
+        "comparison_and_aggregation"
+      ]
+    }
+  },
+  "mapping": {
+    "matches": [
+      {
+        "need_id": "retrieve_kras_target_drug_evidence",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_target_drugs",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "stratify_kras_drug_evidence_by_variant",
+        "match_status": "no_equivalent",
+        "canonical_operation": null,
+        "proposed_operation_name": "stratify_target_drug_evidence_by_variant",
+        "proposal_reason": "No operation stratifies target-drug evidence by specific variants (G12C/G12D). stratify_target_evidence_layers stratifies targets by disease association and tractability evidence, not variant-level drug evidence subsets."
+      },
+      {
+        "need_id": "extract_mechanism_of_action_by_drug",
+        "match_status": "no_equivalent",
+        "canonical_operation": null,
+        "proposed_operation_name": "extract_mechanism_by_drug",
+        "proposal_reason": "No operation extracts mechanism-of-action descriptions from stratified target-drug evidence and annotates evidence type/source. retrieve_evidence_by_type retrieves evidence by type from disease_target_association, differing in input and purpose."
+      },
+      {
+        "need_id": "aggregate_and_compare_kras_variant_drugs",
+        "match_status": "matched",
+        "canonical_operation": "normalize_comparison_dimensions",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      }
+    ]
+  },
+  "final_plan": null,
+  "semantic_acceptance": null,
+  "strategy_duration_seconds": 76.89152791630477,
+  "mapping_duration_seconds": 48.598720042034984,
+  "total_duration_seconds": 125.49334387481213,
+  "errors": [
+    "proposed operations require human review"
+  ],
+  "corrected_model_claims": [
+    "KRAS G12C: removed unverified identity authority",
+    "KRAS G12D: removed unverified identity authority"
+  ],
+  "timeout_cleanup": {},
+  "evidence_collection_started": false,
+  "executed_retrieval_tools": [],
+  "generated_at": "2026-11-12T17:11:58.879853Z",
+  "program_completions": [
+    "inserted step_resolve_kras_g12c (resolve_target) for KRAS G12C: step_retrieve_kras_target_drug_evidence (retrieve_target_drugs) requires resolved_target",
+    "inserted step_resolve_kras_g12d (resolve_target) for KRAS G12D: step_retrieve_kras_target_drug_evidence (retrieve_target_drugs) requires resolved_target"
+  ]
+}

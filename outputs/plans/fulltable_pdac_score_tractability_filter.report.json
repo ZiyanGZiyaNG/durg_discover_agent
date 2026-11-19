@@ -1,0 +1,206 @@
+{
+  "schema_version": "1.0",
+  "planner_mode": "staged",
+  "question": "列出與胰臟癌關聯分數 > 0.7、且具有已知小分子結合口袋（tractability）的標的。",
+  "acceptance_case_id": "pdac_score_tractability_filter",
+  "status": "pending_human_review",
+  "strategy": {
+    "research_objective": "找出與胰臟癌關聯分數大於 0.7，且具有已知小分子結合口袋（tractability）的標的清單。",
+    "entities": [
+      {
+        "entity_ref": "pancreatic_cancer",
+        "entity_type": "disease",
+        "mention": "胰臟癌",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      },
+      {
+        "entity_ref": "target",
+        "entity_type": "target",
+        "mention": "標的",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      },
+      {
+        "entity_ref": "small_molecule_binding_pocket",
+        "entity_type": "mechanism",
+        "mention": "已知小分子結合口袋",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      }
+    ],
+    "needs": [
+      {
+        "need_id": "fetch_pancreatic_cancer_target_associations",
+        "purpose": "獲取胰臟癌與標的之間的關聯分數資料",
+        "operation_search_query": "Open Targets pancreatic cancer target association score",
+        "depends_on": [],
+        "entity_refs": [
+          "pancreatic_cancer",
+          "target"
+        ],
+        "required_inputs": [
+          "disease_id",
+          "association_score_threshold"
+        ],
+        "outputs": [
+          "target_association_scores"
+        ],
+        "sources": [
+          "open_targets"
+        ],
+        "filters": {
+          "disease": "pancreatic_cancer",
+          "association_score_gt": 0.7
+        },
+        "ranking": {
+          "primary_metric": "association_score",
+          "direction": "descending",
+          "secondary_metrics": [
+            "target_id"
+          ]
+        },
+        "aggregation": null,
+        "safeguards": [
+          "exclude_non_protein_targets",
+          "validate_score_range_0_1"
+        ]
+      },
+      {
+        "need_id": "fetch_target_tractability_small_molecule_pocket",
+        "purpose": "獲取標的已知小分子結合口袋（tractability）證據",
+        "operation_search_query": "ChEMBL target tractability small molecule binding pocket",
+        "depends_on": [
+          "fetch_pancreatic_cancer_target_associations"
+        ],
+        "entity_refs": [
+          "target",
+          "small_molecule_binding_pocket"
+        ],
+        "required_inputs": [
+          "target_list_from_previous_need"
+        ],
+        "outputs": [
+          "target_tractability_evidence"
+        ],
+        "sources": [
+          "chembl",
+          "open_targets"
+        ],
+        "filters": {
+          "tractability_modality": "small_molecule",
+          "has_known_binding_pocket": true
+        },
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "require_experimental_structure_or_ligand_binding_data"
+        ]
+      },
+      {
+        "need_id": "filter_and_rank_targets",
+        "purpose": "篩選關聯分數大於 0.7 且具有小分子結合口袋的標的，並依關聯分數排序",
+        "operation_search_query": "filter and rank targets by association score and tractability",
+        "depends_on": [
+          "fetch_pancreatic_cancer_target_associations",
+          "fetch_target_tractability_small_molecule_pocket"
+        ],
+        "entity_refs": [
+          "target"
+        ],
+        "required_inputs": [
+          "target_association_scores",
+          "target_tractability_evidence"
+        ],
+        "outputs": [
+          "final_target_list"
+        ],
+        "sources": [],
+        "filters": {
+          "association_score_gt": 0.7,
+          "has_small_molecule_pocket": true
+        },
+        "ranking": {
+          "primary_metric": "association_score",
+          "direction": "descending",
+          "secondary_metrics": [
+            "target_id"
+          ]
+        },
+        "aggregation": {
+          "group_by": "target_id",
+          "metrics": [
+            "association_score",
+            "tractability_evidence_count"
+          ]
+        },
+        "safeguards": [
+          "handle_missing_tractability_as_unknown",
+          "do_not_infer_efficacy_from_association"
+        ]
+      }
+    ],
+    "evidence_requirements": [
+      "disease-target association score from Open Targets",
+      "target tractability evidence for small molecule binding pocket from ChEMBL or Open Targets"
+    ],
+    "completion_criteria": [
+      "產出包含標的 ID、關聯分數、小分子結合口袋證據的最終標的清單",
+      "所有納入標的關聯分數皆大於 0.7",
+      "所有納入標的皆有已知小分子結合口袋證據，缺失者標記為 unknown 而非負面"
+    ],
+    "global_safeguards": [
+      "不將關聯分數等同療效",
+      "不將可藥性證據等同療效",
+      "缺失證據視為 unknown，不視為負面結果"
+    ],
+    "characteristics": {
+      "primary": "filter_and_rank",
+      "secondary": [
+        "evidence_directed",
+        "comparison_and_aggregation"
+      ]
+    }
+  },
+  "mapping": {
+    "matches": [
+      {
+        "need_id": "fetch_pancreatic_cancer_target_associations",
+        "match_status": "no_equivalent",
+        "canonical_operation": null,
+        "proposed_operation_name": "retrieve_disease_target_association_scores",
+        "proposal_reason": "No operation accepts disease_id and association_score_threshold to return target_association_scores; discover_targets returns associated targets without scores, and retrieve_datasource_scores requires exact disease-target pairs."
+      },
+      {
+        "need_id": "fetch_target_tractability_small_molecule_pocket",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_tractability",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "filter_and_rank_targets",
+        "match_status": "no_equivalent",
+        "canonical_operation": null,
+        "proposed_operation_name": "filter_and_rank_targets",
+        "proposal_reason": "No single operation both filters targets by explicit conditions (association score > 0.7 and small-molecule tractability) and ranks them by association score; filter_targets only filters, rank_targets only ranks."
+      }
+    ]
+  },
+  "final_plan": null,
+  "semantic_acceptance": null,
+  "strategy_duration_seconds": 23.43842245824635,
+  "mapping_duration_seconds": 29.883455999195576,
+  "total_duration_seconds": 53.32682991679758,
+  "errors": [
+    "proposed operations require human review"
+  ],
+  "corrected_model_claims": [],
+  "timeout_cleanup": {},
+  "evidence_collection_started": false,
+  "executed_retrieval_tools": [],
+  "generated_at": "2026-11-06T16:24:28.948871Z"
+}

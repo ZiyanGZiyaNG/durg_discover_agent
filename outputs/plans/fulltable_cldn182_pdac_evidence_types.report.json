@@ -1,0 +1,219 @@
+{
+  "schema_version": "1.0",
+  "planner_mode": "staged",
+  "question": "CLDN18.2 與胰臟癌的關聯，主要來自哪類證據？體細胞突變、表現量資料還是文獻？",
+  "acceptance_case_id": "cldn182_pdac_evidence_types",
+  "status": "pending_human_review",
+  "strategy": {
+    "research_objective": "Determine whether the CLDN18.2–pancreatic cancer association is primarily supported by somatic mutation data, expression data, or literature evidence.",
+    "entities": [
+      {
+        "entity_ref": "CLDN18.2",
+        "entity_type": "target",
+        "mention": "CLDN18.2",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      },
+      {
+        "entity_ref": "pancreatic_cancer",
+        "entity_type": "disease",
+        "mention": "胰臟癌",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      }
+    ],
+    "needs": [
+      {
+        "need_id": "open_targets_association_evidence",
+        "purpose": "從 Open Targets 擷取 CLDN18.2 與胰臟癌的靶點-疾病關聯證據，並區分證據類型（體細胞突變、表現量、文獻等）與分數。",
+        "operation_search_query": "Open Targets target-disease association CLDN18.2 pancreatic cancer evidence type score",
+        "depends_on": [],
+        "entity_refs": [
+          "CLDN18.2",
+          "pancreatic_cancer"
+        ],
+        "required_inputs": [
+          "target_id",
+          "disease_id"
+        ],
+        "outputs": [
+          "association_records",
+          "evidence_type_distribution",
+          "association_score"
+        ],
+        "sources": [
+          "open_targets"
+        ],
+        "filters": {
+          "target": "CLDN18.2",
+          "disease": "pancreatic cancer",
+          "evidence_types": [
+            "somatic_mutation",
+            "expression",
+            "literature",
+            "genetic_association"
+          ]
+        },
+        "ranking": {
+          "primary_metric": "score",
+          "direction": "descending",
+          "secondary_metrics": [
+            "evidence_count"
+          ]
+        },
+        "aggregation": {
+          "group_by": "evidence_type",
+          "metrics": [
+            "sum_score",
+            "record_count"
+          ]
+        },
+        "safeguards": [
+          "Do not treat association as efficacy",
+          "Missing evidence is unknown, not negative"
+        ]
+      },
+      {
+        "need_id": "europe_pmc_literature_evidence",
+        "purpose": "從 Europe PMC 統計同時提及 CLDN18.2 與胰臟癌的文獻數量與代表性文章。",
+        "operation_search_query": "Europe PMC CLDN18.2 pancreatic cancer literature count",
+        "depends_on": [],
+        "entity_refs": [
+          "CLDN18.2",
+          "pancreatic_cancer"
+        ],
+        "required_inputs": [
+          "search_query"
+        ],
+        "outputs": [
+          "publication_count",
+          "representative_papers",
+          "year_distribution"
+        ],
+        "sources": [
+          "europe_pmc"
+        ],
+        "filters": {
+          "query": "CLDN18.2 AND pancreatic cancer",
+          "result_type": "core"
+        },
+        "ranking": {
+          "primary_metric": "relevance_score",
+          "direction": "descending",
+          "secondary_metrics": [
+            "pub_year"
+          ]
+        },
+        "aggregation": null,
+        "safeguards": [
+          "Literature co-occurrence does not prove biological association"
+        ]
+      },
+      {
+        "need_id": "evidence_type_comparison",
+        "purpose": "整合 Open Targets 證據類型分佈與 Europe PMC 文獻數量，判斷 CLDN18.2–胰臟癌關聯主要來自哪類證據。",
+        "operation_search_query": "compare evidence types somatic mutation expression literature for CLDN18.2 pancreatic cancer",
+        "depends_on": [
+          "open_targets_association_evidence",
+          "europe_pmc_literature_evidence"
+        ],
+        "entity_refs": [
+          "CLDN18.2",
+          "pancreatic_cancer"
+        ],
+        "required_inputs": [
+          "association_records",
+          "evidence_type_distribution",
+          "publication_count"
+        ],
+        "outputs": [
+          "primary_evidence_type",
+          "evidence_summary",
+          "confidence_assessment"
+        ],
+        "sources": [],
+        "filters": {},
+        "ranking": null,
+        "aggregation": {
+          "group_by": "evidence_source",
+          "metrics": [
+            "weighted_score",
+            "count"
+          ]
+        },
+        "safeguards": [
+          "Association is not efficacy",
+          "Tractability is not efficacy",
+          "Missing evidence is unknown rather than negative"
+        ]
+      }
+    ],
+    "evidence_requirements": [
+      "somatic_mutation_association",
+      "expression_association",
+      "literature_co_occurrence",
+      "target_disease_association_score"
+    ],
+    "completion_criteria": [
+      "Primary evidence type for CLDN18.2–pancreatic cancer association is identified",
+      "Relative support from somatic mutation, expression, and literature is quantified",
+      "Limitations of each evidence type are stated"
+    ],
+    "global_safeguards": [
+      "Do not infer drug efficacy from target-disease association",
+      "Do not infer tractability from association",
+      "Treat absent evidence as unknown, not negative",
+      "Do not name or guess internal software operations"
+    ],
+    "characteristics": {
+      "primary": "evidence_directed",
+      "secondary": [
+        "filter_and_rank",
+        "comparison_and_aggregation"
+      ]
+    }
+  },
+  "mapping": {
+    "matches": [
+      {
+        "need_id": "open_targets_association_evidence",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_datasource_evidence",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "europe_pmc_literature_evidence",
+        "match_status": "no_equivalent",
+        "canonical_operation": null,
+        "proposed_operation_name": "retrieve_literature_evidence",
+        "proposal_reason": "No operation in the table supports querying external literature databases (e.g., Europe PMC) for co-mention counts, representative papers, or year distributions; existing retrieval operations cover clinical trials, datasource evidence, or negative publications only."
+      },
+      {
+        "need_id": "evidence_type_comparison",
+        "match_status": "matched",
+        "canonical_operation": "compare_evidence_types",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      }
+    ]
+  },
+  "final_plan": null,
+  "semantic_acceptance": null,
+  "strategy_duration_seconds": 34.66608020756394,
+  "mapping_duration_seconds": 31.635168708860874,
+  "total_duration_seconds": 66.30699095781893,
+  "errors": [
+    "proposed operations require human review"
+  ],
+  "corrected_model_claims": [
+    "CLDN18.2: removed unverified identity authority",
+    "pancreatic_cancer: removed unverified identity authority"
+  ],
+  "timeout_cleanup": {},
+  "evidence_collection_started": false,
+  "executed_retrieval_tools": [],
+  "generated_at": "2026-11-06T16:23:34.575709Z"
+}

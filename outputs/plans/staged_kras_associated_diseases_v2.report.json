@@ -1,0 +1,203 @@
+{
+  "schema_version": "1.0",
+  "planner_mode": "staged",
+  "question": "KRAS 與哪些疾病有關聯？證據強度如何？胰臟癌是不是關聯最強的？",
+  "acceptance_case_id": "kras_associated_diseases",
+  "status": "pending_human_review",
+  "strategy": {
+    "research_objective": "針對 KRAS 基因，找出所有關聯疾病及其證據強度，並判斷胰臟癌是否為證據最強的關聯疾病。",
+    "entities": [
+      {
+        "entity_ref": "KRAS",
+        "entity_type": "target",
+        "mention": "KRAS",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      }
+    ],
+    "needs": [
+      {
+        "need_id": "kras_disease_evidence",
+        "purpose": "從 Open Targets 檢索與 KRAS 相關的所有疾病，並擷取每個疾病的關聯證據強度分數與證據類型。",
+        "operation_search_query": "Open Targets KRAS target disease associations evidence strength score",
+        "depends_on": [],
+        "entity_refs": [
+          "KRAS"
+        ],
+        "required_inputs": [
+          "KRAS target identifier"
+        ],
+        "outputs": [
+          "disease_association_list",
+          "evidence_strength_scores",
+          "evidence_data_types"
+        ],
+        "sources": [
+          "open_targets"
+        ],
+        "filters": {
+          "target": "KRAS"
+        },
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "不將關聯證據強度等同於治療效果",
+          "不將可藥性證據等同於治療效果",
+          "缺失證據標記為未知而非否定"
+        ]
+      },
+      {
+        "need_id": "pancreatic_cancer_kras_detail",
+        "purpose": "從 KRAS 關聯疾病清單中提取胰臟癌的具體關聯記錄與證據強度分數。",
+        "operation_search_query": "KRAS pancreatic cancer association evidence strength Open Targets",
+        "depends_on": [
+          "kras_disease_evidence"
+        ],
+        "entity_refs": [
+          "KRAS"
+        ],
+        "required_inputs": [
+          "disease_association_list from kras_disease_evidence"
+        ],
+        "outputs": [
+          "pancreatic_cancer_association_record",
+          "pancreatic_cancer_evidence_score"
+        ],
+        "sources": [
+          "open_targets"
+        ],
+        "filters": {
+          "disease": "pancreatic cancer"
+        },
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "確認疾病名稱標準化，例如胰腺腺癌與胰臟癌的對應關係"
+        ]
+      },
+      {
+        "need_id": "rank_kras_disease_associations",
+        "purpose": "依證據強度分數對所有 KRAS 關聯疾病進行降冪排名，並判斷胰臟癌是否位於排名首位。",
+        "operation_search_query": "rank KRAS disease associations by evidence strength score descending",
+        "depends_on": [
+          "kras_disease_evidence"
+        ],
+        "entity_refs": [
+          "KRAS"
+        ],
+        "required_inputs": [
+          "disease_association_list from kras_disease_evidence"
+        ],
+        "outputs": [
+          "ranked_disease_list",
+          "pancreatic_cancer_rank",
+          "is_strongest_association_boolean"
+        ],
+        "sources": [],
+        "filters": {},
+        "ranking": {
+          "primary_metric": "evidence_strength_score",
+          "direction": "descending",
+          "secondary_metrics": [
+            "number_of_evidence_sources",
+            "datasource_count"
+          ]
+        },
+        "aggregation": {
+          "group_by": "disease",
+          "metric": "max_evidence_score"
+        },
+        "safeguards": [
+          "不同證據類型不直接相加，僅比較 Open Targets 綜合證據分數",
+          "未列出的疾病不視為無關聯，僅視為未在檢索範圍內"
+        ]
+      }
+    ],
+    "evidence_requirements": [
+      "Open Targets 針對 KRAS 與所有關聯疾病的證據強度分數",
+      "胰臟癌與 KRAS 的具體關聯證據記錄與分數",
+      "所有 KRAS 關聯疾病依證據強度的比較排名"
+    ],
+    "completion_criteria": [
+      "已取得 KRAS 與所有關聯疾病的證據強度分數清單",
+      "已取得胰臟癌與 KRAS 的具體證據強度分數",
+      "已完成依證據強度的疾病排名，並判斷胰臟癌是否為最強關聯疾病"
+    ],
+    "global_safeguards": [
+      "關聯證據不代表治療效果",
+      "可藥性證據不代表治療效果",
+      "缺失證據標記為未知而非否定",
+      "不猜測軟體操作或資料庫內部細節"
+    ],
+    "characteristics": {
+      "primary": "filter_and_rank",
+      "secondary": [
+        "evidence_directed"
+      ]
+    }
+  },
+  "operation_candidates": {
+    "kras_disease_evidence": [
+      "retrieve_exact_pairs",
+      "compare_association_evidence",
+      "discover_targets",
+      "join_disease_target_drug",
+      "discover_targets_per_disease"
+    ],
+    "pancreatic_cancer_kras_detail": [
+      "compare_association_evidence",
+      "discover_targets",
+      "stratify_target_evidence_layers",
+      "retrieve_target_cancers",
+      "retrieve_target_drugs"
+    ],
+    "rank_kras_disease_associations": [
+      "compare_disease_rank",
+      "rank_diseases",
+      "retrieve_exact_pairs",
+      "compare_association_evidence",
+      "retrieve_evidence_by_type"
+    ]
+  },
+  "mapping": {
+    "matches": [
+      {
+        "need_id": "kras_disease_evidence",
+        "match_status": "no_equivalent",
+        "canonical_operation": null,
+        "proposed_operation_name": "retrieve_diseases_for_target",
+        "proposal_reason": "None of the candidates retrieves diseases associated with a given target. retrieve_exact_pairs requires already-resolved disease-target pairs; compare_association_evidence only compares evidence; discover_targets and discover_targets_per_disease go from disease to targets (wrong direction); join_disease_target_drug involves drugs. No candidate returns all KRAS-associated diseases together with evidence strength scores and evidence types."
+      },
+      {
+        "need_id": "pancreatic_cancer_kras_detail",
+        "match_status": "no_equivalent",
+        "canonical_operation": null,
+        "proposed_operation_name": "extract_disease_association_record",
+        "proposal_reason": "None of the candidates extracts a single disease's association record and evidence strength score from an existing disease_association_list. compare_association_evidence compares evidence across pairs; discover_targets resolves disease to targets (wrong direction); stratify_target_evidence_layers requires target-drug and tractability evidence; retrieve_target_cancers takes a target identifier rather than filtering an existing list; retrieve_target_drugs concerns target-drug relations."
+      },
+      {
+        "need_id": "rank_kras_disease_associations",
+        "match_status": "matched",
+        "canonical_operation": "rank_diseases",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      }
+    ]
+  },
+  "final_plan": null,
+  "semantic_acceptance": null,
+  "strategy_duration_seconds": 40.39333395753056,
+  "mapping_duration_seconds": 38.129815499298275,
+  "total_duration_seconds": 78.54229679238051,
+  "errors": [
+    "proposed operations require human review"
+  ],
+  "corrected_model_claims": [
+    "KRAS: removed unverified identity authority"
+  ],
+  "timeout_cleanup": {},
+  "evidence_collection_started": false,
+  "executed_retrieval_tools": [],
+  "generated_at": "2026-11-05T14:29:49.960334Z"
+}

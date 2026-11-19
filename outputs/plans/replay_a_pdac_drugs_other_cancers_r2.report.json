@@ -1,0 +1,425 @@
+{
+  "schema_version": "1.0",
+  "planner_mode": "staged",
+  "question": "目前用於治療胰臟癌的藥物（如 erlotinib、olaparib），它們的標的還牽涉哪些其他癌別？",
+  "acceptance_case_id": "pdac_drugs_other_cancers",
+  "status": "failed",
+  "strategy": {
+    "research_objective": "找出 erlotinib 與 olaparib 的標的蛋白在除胰臟癌外還與哪些癌別有疾病關聯，並整合標的-藥物與可藥性證據進行分層。",
+    "entities": [
+      {
+        "entity_ref": "pancreatic_cancer",
+        "entity_type": "disease",
+        "mention": "胰臟癌",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      },
+      {
+        "entity_ref": "erlotinib",
+        "entity_type": "drug",
+        "mention": "erlotinib",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      },
+      {
+        "entity_ref": "olaparib",
+        "entity_type": "drug",
+        "mention": "olaparib",
+        "entity_id": null,
+        "canonical_name": null,
+        "resolution_status": "unresolved"
+      }
+    ],
+    "needs": [
+      {
+        "need_id": "identify_drug_targets",
+        "purpose": "確認 erlotinib 與 olaparib 的直接標的蛋白，並建立後續疾病關聯分析的輸入清單。",
+        "operation_search_query": "drug-target interaction for erlotinib and olaparib",
+        "depends_on": [],
+        "entity_refs": [
+          "erlotinib",
+          "olaparib"
+        ],
+        "required_inputs": [
+          "erlotinib",
+          "olaparib"
+        ],
+        "outputs": [
+          "target_list",
+          "drug_target_confidence"
+        ],
+        "sources": [
+          "chembl",
+          "open_targets"
+        ],
+        "filters": {
+          "drug_names": [
+            "erlotinib",
+            "olaparib"
+          ],
+          "interaction_type": [
+            "inhibitor",
+            "target"
+          ]
+        },
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "只收錄直接標的，不包含下游通路蛋白"
+        ]
+      },
+      {
+        "need_id": "pancreatic_cancer_target_association",
+        "purpose": "驗證胰臟癌與已識別標的之間的疾病-標的關聯證據，作為基準參照。",
+        "operation_search_query": "disease-target association pancreatic cancer EGFR PARP1 PARP2",
+        "depends_on": [
+          "identify_drug_targets"
+        ],
+        "entity_refs": [
+          "pancreatic_cancer"
+        ],
+        "required_inputs": [
+          "target_list"
+        ],
+        "outputs": [
+          "pancreatic_cancer_association_scores"
+        ],
+        "sources": [
+          "open_targets"
+        ],
+        "filters": {
+          "disease": "pancreatic_cancer",
+          "targets": [
+            "EGFR",
+            "PARP1",
+            "PARP2"
+          ]
+        },
+        "ranking": {
+          "primary_metric": "association_score",
+          "direction": "descending",
+          "secondary_metrics": [
+            "evidence_count"
+          ]
+        },
+        "aggregation": null,
+        "safeguards": [
+          "關聯證據不代表治療效果"
+        ]
+      },
+      {
+        "need_id": "other_cancer_target_association",
+        "purpose": "檢索 EGFR、PARP1、PARP2 與除胰臟癌外之其他癌別的疾病-標的關聯證據。",
+        "operation_search_query": "disease-target association EGFR PARP1 PARP2 cancer types excluding pancreatic cancer",
+        "depends_on": [
+          "identify_drug_targets"
+        ],
+        "entity_refs": [],
+        "required_inputs": [
+          "target_list"
+        ],
+        "outputs": [
+          "other_cancer_association_list"
+        ],
+        "sources": [
+          "open_targets"
+        ],
+        "filters": {
+          "exclude_disease": "pancreatic_cancer",
+          "disease_category": "cancer",
+          "targets": [
+            "EGFR",
+            "PARP1",
+            "PARP2"
+          ]
+        },
+        "ranking": {
+          "primary_metric": "association_score",
+          "direction": "descending",
+          "secondary_metrics": [
+            "evidence_count",
+            "disease_prevalence"
+          ]
+        },
+        "aggregation": {
+          "group_by": "target",
+          "aggregate": [
+            "cancer_type",
+            "association_score"
+          ]
+        },
+        "safeguards": [
+          "不將關聯證據解讀為療效證據"
+        ]
+      },
+      {
+        "need_id": "target_drug_evidence",
+        "purpose": "收集 EGFR 與 PARP1/2 的已知標的-藥物證據，包括 erlotinib、olaparib 與其他藥物。",
+        "operation_search_query": "drug-target interaction EGFR PARP1 PARP2 approved drugs",
+        "depends_on": [
+          "identify_drug_targets"
+        ],
+        "entity_refs": [],
+        "required_inputs": [
+          "target_list"
+        ],
+        "outputs": [
+          "target_drug_list"
+        ],
+        "sources": [
+          "chembl",
+          "open_targets"
+        ],
+        "filters": {
+          "targets": [
+            "EGFR",
+            "PARP1",
+            "PARP2"
+          ],
+          "drug_type": [
+            "small_molecule",
+            "approved"
+          ]
+        },
+        "ranking": {
+          "primary_metric": "drug_target_confidence",
+          "direction": "descending",
+          "secondary_metrics": [
+            "approval_status"
+          ]
+        },
+        "aggregation": {
+          "group_by": "target",
+          "aggregate": [
+            "drug_name",
+            "mechanism_of_action"
+          ]
+        },
+        "safeguards": [
+          "僅收錄直接標的-藥物關係，不包含代謝物或間接調節"
+        ]
+      },
+      {
+        "need_id": "target_tractability_evidence",
+        "purpose": "收集 EGFR、PARP1、PARP2 的可藥性證據，例如已知配體、結構資料或生物標記。",
+        "operation_search_query": "target tractability EGFR PARP1 PARP2 ligand structural data",
+        "depends_on": [
+          "identify_drug_targets"
+        ],
+        "entity_refs": [],
+        "required_inputs": [
+          "target_list"
+        ],
+        "outputs": [
+          "target_tractability_scores"
+        ],
+        "sources": [
+          "open_targets",
+          "chembl"
+        ],
+        "filters": {
+          "targets": [
+            "EGFR",
+            "PARP1",
+            "PARP2"
+          ]
+        },
+        "ranking": null,
+        "aggregation": null,
+        "safeguards": [
+          "可藥性證據不代表臨床療效"
+        ]
+      },
+      {
+        "need_id": "integrate_and_stratify_results",
+        "purpose": "將其他癌別關聯與標的-藥物、可藥性證據整合，按標的與癌別分層排名，並標示證據缺口。",
+        "operation_search_query": "integrate disease-target association with drug and tractability evidence for EGFR PARP1 PARP2 other cancers",
+        "depends_on": [
+          "pancreatic_cancer_target_association",
+          "other_cancer_target_association",
+          "target_drug_evidence",
+          "target_tractability_evidence"
+        ],
+        "entity_refs": [],
+        "required_inputs": [
+          "other_cancer_association_list",
+          "target_drug_list",
+          "target_tractability_scores"
+        ],
+        "outputs": [
+          "stratified_cancer_target_report"
+        ],
+        "sources": [],
+        "filters": {},
+        "ranking": {
+          "primary_metric": "association_score",
+          "direction": "descending",
+          "secondary_metrics": [
+            "drug_support_count",
+            "tractability_score"
+          ]
+        },
+        "aggregation": {
+          "group_by": [
+            "target",
+            "cancer_type"
+          ],
+          "aggregate": [
+            "association_score",
+            "supporting_drugs",
+            "tractability_flag"
+          ]
+        },
+        "safeguards": [
+          "缺失證據標示為 unknown，不視為負面證據",
+          "不得將關聯或可藥性誤標為療效證據"
+        ]
+      }
+    ],
+    "evidence_requirements": [
+      "open_targets disease-target association scores",
+      "ChEMBL drug-target interaction confidence",
+      "tractability annotations from Open Targets or ChEMBL"
+    ],
+    "completion_criteria": [
+      "已列出 erlotinib 與 olaparib 的所有直接標的",
+      "已列出每個標的與除胰臟癌外之癌別的關聯證據",
+      "已整合標的-藥物證據與可藥性證據，並以分層報告呈現",
+      "所有缺失證據均標示為 unknown，未誤標為負面"
+    ],
+    "global_safeguards": [
+      "疾病-標的關聯不等於治療效果",
+      "可藥性證據不等於臨床療效",
+      "缺失證據標示為 unknown，不視為負面證據",
+      "不得超出直接標的範圍推論下游癌別"
+    ],
+    "characteristics": {
+      "primary": "filter_and_rank",
+      "secondary": [
+        "evidence_directed",
+        "comparison_and_aggregation"
+      ]
+    }
+  },
+  "mapping": {
+    "matches": [
+      {
+        "need_id": "identify_drug_targets",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_drug_targets",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "pancreatic_cancer_target_association",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_exact_pairs",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "other_cancer_target_association",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_target_cancers",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "target_drug_evidence",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_target_drugs",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "target_tractability_evidence",
+        "match_status": "matched",
+        "canonical_operation": "retrieve_tractability",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      },
+      {
+        "need_id": "integrate_and_stratify_results",
+        "match_status": "matched",
+        "canonical_operation": "stratify_target_evidence_layers",
+        "proposed_operation_name": null,
+        "proposal_reason": null
+      }
+    ]
+  },
+  "final_plan": null,
+  "semantic_acceptance": {
+    "case_id": "pdac_drugs_other_cancers",
+    "passed": false,
+    "missing_entities": [],
+    "missing_capabilities": [
+      "resolve_disease_and_drugs",
+      "retrieve_disease_drugs",
+      "join_cross_indication_paths"
+    ],
+    "missing_operations": [
+      "resolve_disease_and_drugs",
+      "retrieve_disease_drugs",
+      "join_cross_indication_paths"
+    ],
+    "missing_dependencies": [
+      "resolve_disease_and_drugs->retrieve_disease_drugs",
+      "retrieve_disease_drugs->retrieve_drug_targets",
+      "retrieve_target_cancers->join_cross_indication_paths"
+    ],
+    "missing_sources": [],
+    "missing_safeguards": [
+      "approval_requires_explicit_source",
+      "association_does_not_imply_indication"
+    ],
+    "missing_filters": [
+      "cancer_only",
+      "exclude_index_disease"
+    ],
+    "missing_ranking": [],
+    "missing_aggregation": [
+      "group_by_drug_and_target"
+    ],
+    "forbidden_findings": [],
+    "optional_capabilities_present": [],
+    "accepted_capabilities": [
+      "retrieve_drug_targets",
+      "retrieve_target_cancers"
+    ],
+    "actual_operations": [
+      "resolve_disease",
+      "resolve_drug",
+      "retrieve_drug_targets",
+      "retrieve_exact_pairs",
+      "retrieve_target_cancers",
+      "retrieve_target_drugs",
+      "retrieve_tractability",
+      "stratify_target_evidence_layers"
+    ],
+    "unrecognized_operations": [],
+    "proposed_operations": []
+  },
+  "strategy_duration_seconds": 43.07426525000483,
+  "mapping_duration_seconds": 90.6497709993273,
+  "total_duration_seconds": 90.65057662501931,
+  "errors": [
+    "compiled plan failed hidden semantic acceptance"
+  ],
+  "corrected_model_claims": [],
+  "timeout_cleanup": {},
+  "evidence_collection_started": false,
+  "executed_retrieval_tools": [],
+  "generated_at": "2026-11-12T16:00:48.524619Z",
+  "program_completions": [
+    "inserted step_resolve_erlotinib (resolve_drug) for erlotinib: step_identify_drug_targets (retrieve_drug_targets) requires resolved_drug",
+    "inserted step_resolve_olaparib (resolve_drug) for olaparib: step_identify_drug_targets (retrieve_drug_targets) requires resolved_drug",
+    "inserted step_resolve_pancreatic_cancer (resolve_disease) for pancreatic_cancer: step_pancreatic_cancer_target_association (retrieve_exact_pairs) requires resolved_disease",
+    "step_identify_drug_targets: added table-required safeguards ['missing_not_negative', 'provenance_pagination_truncation']",
+    "step_pancreatic_cancer_target_association: added table-required safeguards ['association_does_not_imply_efficacy', 'association_score_not_probability', 'missing_not_negative', 'provenance_pagination_truncation']",
+    "step_other_cancer_target_association: added table-required safeguards ['missing_not_negative', 'provenance_pagination_truncation']",
+    "step_target_drug_evidence: added table-required safeguards ['missing_not_negative', 'provenance_pagination_truncation']",
+    "step_target_tractability_evidence: added table-required safeguards ['missing_not_negative', 'provenance_pagination_truncation', 'tractability_not_efficacy']"
+  ]
+}
