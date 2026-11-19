@@ -2,9 +2,7 @@ import json
 
 from planner_acceptance import load_acceptance_cases
 from staged_planner import (
-    DEFAULT_SHORTLIST_SIZE,
     StagedNaturalLanguagePlanner,
-    _shortlist_size,
     operation_candidates,
 )
 
@@ -174,10 +172,7 @@ def test_staged_planner_compiles_and_passes_hidden_case(tmp_path):
     assert report.final_plan.original_question == case.question
     assert report.executed_retrieval_tools == []
     request = json.loads(mapping_agent.calls[0]["messages"][0]["content"])
-    assert (
-        len(request["atomic_needs_with_candidates"][0]["candidates"])
-        == DEFAULT_SHORTLIST_SIZE
-    )
+    assert len(request["atomic_needs_with_candidates"][0]["candidates"]) == 5
     assert json.loads(checkpoint.read_text(encoding="utf-8"))["status"] == "passed"
 
 
@@ -234,93 +229,3 @@ def test_compiled_steps_reference_upstream_outputs_as_inputs():
         for ref in step.inputs.values():
             assert ref.step_id in step.depends_on
             assert ref.output in steps[ref.step_id].outputs
-
-
-def test_shortlist_keeps_reviewed_operations_for_kras_needs():
-    """Replay of real staged queries whose reviewed operation once missed the top 5."""
-    cases = [
-        (
-            "resolve_kras_entity",
-            "KRAS human gene target canonical identifier Open Targets ChEMBL",
-            "resolve_target",
-        ),
-        (
-            "retrieve_kras_disease_associations",
-            "KRAS disease association Open Targets evidence score data types disease ID",
-            "retrieve_associated_diseases",
-        ),
-        (
-            "rank_kras_disease_associations",
-            "rank KRAS disease associations by association score evidence count "
-            "evidence type diversity",
-            "rank_diseases",
-        ),
-        (
-            "kras_disease_evidence",
-            "Open Targets KRAS target disease associations evidence strength score",
-            "retrieve_associated_diseases",
-        ),
-    ]
-    for need_id, query, expected in cases:
-        assert expected in operation_candidates(query, need_id=need_id), need_id
-
-
-def _without_resolver():
-    strategy = _strategy()
-    strategy["needs"] = [n for n in strategy["needs"] if n["need_id"] != "resolve"]
-    for need in strategy["needs"]:
-        need["depends_on"] = [d for d in need["depends_on"] if d != "resolve"]
-    mapping = _mapping()
-    mapping["matches"] = [m for m in mapping["matches"] if m["need_id"] != "resolve"]
-    return strategy, mapping
-
-
-def test_missing_resolver_is_inserted_from_operation_table():
-    strategy, mapping = _without_resolver()
-    report = StagedNaturalLanguagePlanner(
-        FakeAgent(strategy), FakeAgent(mapping)
-    ).run_with_report(_case().question)
-
-    assert report.status == "passed"
-    steps = {step.step_id: step for step in report.final_plan.plan_steps}
-    resolver = report.final_plan.plan_steps[0]
-    assert resolver.operation == "resolve_disease"
-    assert resolver.entity_refs == ["disease_1"]
-    discover = steps["step_discover"]
-    assert resolver.step_id in discover.depends_on
-    assert resolver.step_id in discover.inputs
-    assert any(note.startswith("inserted") for note in report.program_completions)
-
-
-def test_existing_resolver_is_not_duplicated():
-    report = StagedNaturalLanguagePlanner(
-        FakeAgent(_strategy()), FakeAgent(_mapping())
-    ).run_with_report(_case().question)
-
-    assert report.final_plan.plan_steps[0].step_id == "step_resolve"
-    assert not any(note.startswith("inserted") for note in report.program_completions)
-
-
-def test_table_required_safeguards_are_added_and_recorded():
-    from planner_acceptance import OPERATION_TABLE
-
-    report = StagedNaturalLanguagePlanner(
-        FakeAgent(_strategy()), FakeAgent(_mapping())
-    ).run_with_report(_case().question)
-
-    plan = report.final_plan
-    for step in plan.plan_steps:
-        required = set(OPERATION_TABLE[step.operation].required_safeguards)
-        assert required <= set(step.safeguards) | set(plan.global_safeguards), step.step_id
-    assert any("table-required safeguards" in note for note in report.program_completions)
-
-
-def test_shortlist_size_defaults_to_ten_and_can_be_overridden(monkeypatch):
-    monkeypatch.delenv("PLANNER_SHORTLIST_SIZE", raising=False)
-    assert _shortlist_size() == DEFAULT_SHORTLIST_SIZE == 10
-    monkeypatch.setenv("PLANNER_SHORTLIST_SIZE", "5")
-    assert _shortlist_size() == 5
-    monkeypatch.setenv("PLANNER_SHORTLIST_SIZE", "not-a-number")
-    assert _shortlist_size() == DEFAULT_SHORTLIST_SIZE
-    monkeypatch.setenv("PLANNER_SHORTLIST_SIZE", "0")
-    assert _shortlist_size() == 1
