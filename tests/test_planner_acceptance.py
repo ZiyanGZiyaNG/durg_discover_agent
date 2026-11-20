@@ -24,6 +24,7 @@ from schemas import (
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "planner_acceptance_cases.json"
+LAYERED_FIXTURE = Path(__file__).parent / "fixtures" / "layered_targets_test_case.json"
 
 
 def _compliant_plan(case):
@@ -223,7 +224,7 @@ def test_evaluator_rejects_missing_source_and_safeguard():
 
 
 def test_query_characteristics_do_not_substitute_for_plan_semantics():
-    case = load_acceptance_cases(FIXTURE)[0]
+    case = load_acceptance_cases(LAYERED_FIXTURE)[0]
     plan = _compliant_plan(case)
     incomplete = deepcopy(plan)
     incomplete.plan_steps[0].ranking = None
@@ -264,7 +265,7 @@ def test_repair_feedback_contains_only_actual_gaps_and_errors():
 
 
 def test_dependency_feedback_explains_arrow_direction_as_depends_on_edit():
-    case = load_acceptance_cases(FIXTURE)[0]
+    case = load_acceptance_cases(LAYERED_FIXTURE)[0]
     plan = _compliant_plan(case)
     rank_step = next(
         step for step in plan.plan_steps if step.operation == "rank_targets"
@@ -280,7 +281,7 @@ def test_dependency_feedback_explains_arrow_direction_as_depends_on_edit():
 
 
 def test_ranking_alias_is_accepted_and_actual_operations_are_reported():
-    case = load_acceptance_cases(FIXTURE)[0]
+    case = load_acceptance_cases(LAYERED_FIXTURE)[0]
     plan = _compliant_plan(case)
     for step in plan.plan_steps:
         step.ranking = None
@@ -316,7 +317,7 @@ def test_ranking_criteria_is_rejected_as_ambiguous():
 
 
 def test_discover_per_disease_and_sort_by_value_are_valid_equivalents():
-    case = load_acceptance_cases(FIXTURE)[0]
+    case = load_acceptance_cases(LAYERED_FIXTURE)[0]
     plan = _compliant_plan(case)
     plan.plan_steps[1].operation = "discover_targets_per_disease"
     plan.plan_steps[0].ranking = None
