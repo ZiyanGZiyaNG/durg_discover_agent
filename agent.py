@@ -42,6 +42,7 @@ from schemas import (
 )
 from research_planner import Agent1ResearchPlanner, ResearchPlannerError
 from staged_planner import StagedNaturalLanguagePlanner, StagedPlannerReport
+from slot_planner import SlotPlanner, SlotPlannerReport
 from query_opentargets import EntityResolutionError
 from tools import DISEASE_TARGET_TOOLS, DRUG_PROPERTY_TOOLS
 
@@ -307,6 +308,36 @@ def run_staged_plan_with_report(
     )
 
 
+def _acceptance_case_for(question: str, acceptance_case_id: str | None):
+    if not acceptance_case_id:
+        return None
+    fixture = Path(__file__).parent / "tests" / "fixtures" / "planner_acceptance_cases.json"
+    cases = {case.case_id: case for case in load_acceptance_cases(fixture)}
+    if acceptance_case_id not in cases:
+        raise ValueError(f"unknown acceptance case: {acceptance_case_id}")
+    case = cases[acceptance_case_id]
+    if case.question != question:
+        raise ValueError(
+            "--question must exactly match the selected acceptance case question"
+        )
+    return case
+
+
+def run_slot_plan_with_report(
+    question: str,
+    acceptance_case_id: str | None = None,
+    checkpoint_path: str | Path | None = None,
+    max_attempts: int = 2,
+) -> SlotPlannerReport:
+    """Model fills the small table; Python assembles the Plan from the table."""
+    return SlotPlanner().run_with_report(
+        question,
+        acceptance_case=_acceptance_case_for(question, acceptance_case_id),
+        checkpoint_path=checkpoint_path,
+        max_attempts=max_attempts,
+    )
+
+
 def run_planned_agent1_as_json(
     disease: str,
     target: str | None,
@@ -425,6 +456,23 @@ def parse_args() -> argparse.Namespace:
     staged_query.add_argument("--question", required=True)
     staged_query.add_argument("--acceptance-case")
     staged_query.add_argument("--output")
+    slot_query = subparsers.add_parser(
+        "plan-query-slots",
+        help=(
+            "Model fills entities/path/conditions; Python assembles the Plan "
+            "from the operation table; no retrieval"
+        ),
+    )
+    slot_query.add_argument("--question", required=True)
+    slot_query.add_argument("--acceptance-case")
+    slot_query.add_argument("--output")
+    slot_query.add_argument(
+        "--max-attempts",
+        type=int,
+        choices=range(1, 4),
+        default=2,
+        help="Model attempts at the table: one fill plus fix-ups (default: 2)",
+    )
     discovery.add_argument(
         "--output",
         help=(
@@ -451,6 +499,25 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.command == "plan-query-slots":
+        checkpoint_path = (
+            Path(args.output).with_suffix(".report.json") if args.output else None
+        )
+        report = run_slot_plan_with_report(
+            args.question, args.acceptance_case, checkpoint_path, args.max_attempts
+        )
+        if args.output:
+            console.print(f"Saved diagnostics: {checkpoint_path}")
+            if report.status == "passed" and report.final_plan is not None:
+                Path(args.output).write_text(
+                    report.final_plan.model_dump_json(indent=2), encoding="utf-8"
+                )
+                console.print(f"Saved Plan: {args.output}")
+        else:
+            console.print_json(report.model_dump_json())
+        if report.status != "passed":
+            raise SystemExit(1)
+        return
     if args.command == "plan-query-staged":
         checkpoint_path = (
             Path(args.output).with_suffix(".report.json") if args.output else None

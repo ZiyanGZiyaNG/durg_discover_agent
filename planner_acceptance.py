@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from schemas import QueryManifestV2
 
 
 SourceName = Literal["open_targets", "europe_pmc", "clinicaltrials_gov", "chembl"]
+EntityType = Literal["disease", "target", "drug", "tissue", "mechanism"]
+# Path roles may also work on the association edge itself.
+RowType = Literal["disease", "target", "drug", "tissue", "mechanism", "association"]
 
 
 class ExpectedEntity(BaseModel):
@@ -35,6 +38,9 @@ class PlannerAcceptanceCase(BaseModel):
     required_ranking: list[str] = Field(default_factory=list)
     required_aggregation: list[str] = Field(default_factory=list)
     allowed_characteristics: list[str] = Field(min_length=1)
+    # The question set's own labels (entities, path, stated conditions) in the
+    # slot planner's table shape; validated by slot_planner.QuerySlots.
+    expected_slots: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def requirements_must_be_consistent(self) -> "PlannerAcceptanceCase":
@@ -255,6 +261,70 @@ OPERATION_SEMANTICS: dict[str, str] = {
 }
 
 
+class PathRole(BaseModel):
+    """Where an operation sits on a question's path (read by the slot planner).
+
+    kind="resolve":   resolves a named entity of subject_type ("variant" name
+                      resolves a gene named with mutations).
+    kind="hop":       walks from subject_type to object_type; name is the
+                      relation, default marks the hop used when none is named.
+    kind="attribute": extra evidence about rows of subject_type.
+    kind="rank":      orders rows of subject_type.
+    kind="check":     tests a named entity of subject_type against an
+                      earlier result.
+    kind="combine":   combines path results; "join_path" connects every edge
+                      of a path whose types are path_types, "intersect" keeps
+                      rows shared by several same-shape paths.
+    kind="follow_up": added by the table, never named by the model: after a
+                      combine (see then) or as an analysis prerequisite.
+    kind="analysis":  a named analysis the question asks for; the slot planner
+                      adds its prerequisites from requires_all/requires_any.
+    kind="filter":    the step that applies stated conditions to rows of
+                      subject_type (see FILTER_RULES).
+    per_entity:       a hop or resolve that keeps several named entities apart
+                      in one step; same-shape paths are merged into it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal[
+        "resolve", "hop", "attribute", "rank", "check", "combine", "follow_up",
+        "analysis", "filter",
+    ]
+    subject_type: RowType
+    object_type: EntityType | None = None
+    # combine: the entity-type chain of the path(s) this operation combines.
+    path_types: list[EntityType] = Field(default_factory=list)
+    per_entity: bool = False
+    # Operations the table always appends after this one.
+    then: list[str] = Field(default_factory=list)
+    name: str = "default"
+    default: bool = False
+    # Filters a hop always carries, e.g. approved indications only.
+    fixed_filters: dict[str, Any] = Field(default_factory=dict)
+    # resolve(variant): filter and grouping keys for every path leaving it.
+    scope_filter: str | None = None
+    scope_grouping: str | None = None
+    # rank: metric used when a check needs a ranking the question did not name.
+    default_metric: str | None = None
+    # check: aggregation key the step must declare.
+    aggregation_key: str | None = None
+    # A filter the question must state before this operation can run.
+    needs_stated_filter: str | None = None
+    meaning: str = ""
+
+    @model_validator(mode="after")
+    def hop_needs_object_type(self) -> "PathRole":
+        if (self.kind == "hop") != (self.object_type is not None):
+            raise ValueError("object_type is required for hops and only for hops")
+        if self.kind == "combine":
+            if not self.path_types or self.path_types[-1] != self.subject_type:
+                raise ValueError("combine needs path_types ending at subject_type")
+            if self.name == "join_path" and len(self.path_types) < 3:
+                raise ValueError("join_path needs a multi-hop path")
+        return self
+
+
 class OperationTableEntry(BaseModel):
     """One human-approved canonical operation and its reviewed equivalents."""
 
@@ -262,9 +332,7 @@ class OperationTableEntry(BaseModel):
     equivalent_operations: list[str] = Field(default_factory=list)
     description: str
     operation_kind: Literal["resolution", "retrieval", "analysis"]
-    allowed_entity_types: list[
-        Literal["disease", "target", "drug", "tissue", "mechanism"]
-    ] = Field(default_factory=list)
+    allowed_entity_types: list[EntityType] = Field(default_factory=list)
     requires_all: list[str] = Field(default_factory=list)
     requires_any: list[str] = Field(default_factory=list)
     provides: list[str] = Field(default_factory=list)
@@ -272,6 +340,9 @@ class OperationTableEntry(BaseModel):
     supported_filters: list[str] = Field(default_factory=list)
     requires_aggregation: bool = False
     reserved_outputs: list[str] = Field(default_factory=list)
+    # Sources a Plan step declares for this operation. Empty for local analysis.
+    default_sources: list[SourceName] = Field(default_factory=list)
+    path_role: PathRole | None = None
     status: Literal["approved"] = "approved"
 
 
@@ -289,40 +360,272 @@ _OPERATION_CONTRACTS: dict[str, dict] = {
     "discover_targets_per_disease": {"requires_all": ["resolved_disease"], "provides": ["disease_target_association", "target_candidates"], "required_safeguards": ["association_score_not_probability", "association_does_not_imply_efficacy"]},
     "retrieve_exact_pair": {"requires_all": ["resolved_disease", "resolved_target"], "provides": ["disease_target_association"], "required_safeguards": ["association_score_not_probability", "association_does_not_imply_efficacy"]},
     "retrieve_exact_pairs": {"requires_all": ["resolved_disease", "resolved_target"], "provides": ["disease_target_association"], "required_safeguards": ["association_score_not_probability", "association_does_not_imply_efficacy"]},
-    "retrieve_target_drugs": {"requires_any": ["resolved_target", "target_candidates"], "provides": ["target_drug_evidence"]},
+    "retrieve_target_drugs": {"requires_any": ["resolved_target", "target_candidates"], "provides": ["target_drug_evidence"], "supported_filters": ["target_variant"]},
     "retrieve_drug_targets": {"requires_all": ["resolved_drug"], "provides": ["target_drug_evidence"]},
     "check_indication": {"requires_all": ["approval_evidence"], "provides": ["indication_check"], "required_safeguards": ["approval_requires_explicit_source", "database_approval_requires_official_confirmation", "missing_not_negative"]},
     "retrieve_tractability": {"requires_any": ["resolved_target", "target_candidates"], "provides": ["tractability_evidence"], "required_safeguards": ["tractability_not_efficacy"]},
-    "retrieve_approved_indications": {"provides": ["approval_evidence"]},
+    "retrieve_approved_indications": {"requires_any": ["resolved_drug", "target_drug_evidence"], "provides": ["approval_evidence"], "supported_filters": ["approval_status"]},
     "retrieve_clinical_trials": {"provides": ["clinical_trial_evidence"]},
-    "retrieve_clinical_stage": {"provides": ["clinical_stage_evidence"]},
+    "retrieve_clinical_stage": {"requires_all": ["target_drug_evidence"], "provides": ["clinical_stage_evidence"]},
     "retrieve_safety_evidence": {"requires_any": ["resolved_target", "target_candidates"], "provides": ["safety_evidence"]},
-    "retrieve_normal_tissue_expression": {"requires_any": ["resolved_target", "target_candidates"], "provides": ["normal_tissue_expression"]},
-    "retrieve_trial_terminations": {"requires_any": ["resolved_target", "target_candidates"], "provides": ["trial_termination_evidence"]},
-    "integrate_safety_and_expression": {"requires_any": ["safety_evidence", "trial_termination_evidence", "normal_tissue_expression"], "provides": ["safety_expression_integration"]},
+    "retrieve_normal_tissue_expression": {"requires_any": ["resolved_target", "target_candidates"], "provides": ["normal_tissue_expression"], "required_safeguards": ["expression_not_toxicity", "specialized_expression_source_confirmation_required"]},
+    "retrieve_trial_terminations": {"requires_any": ["resolved_target", "target_candidates"], "provides": ["trial_termination_evidence"], "required_safeguards": ["termination_reason_required"]},
+    "integrate_safety_and_expression": {"requires_any": ["safety_evidence", "trial_termination_evidence", "normal_tissue_expression"], "provides": ["safety_expression_integration"], "required_safeguards": ["separate_fact_interpretation"]},
     "stratify_target_evidence_layers": {"requires_all": ["disease_target_association", "target_drug_evidence", "tractability_evidence"], "provides": ["stratified_target_evidence"], "requires_aggregation": True, "reserved_outputs": ["target_translation_layer"]},
     "aggregate_category_distribution": {"requires_aggregation": True, "reserved_outputs": ["category_distribution"]},
     "rank_targets": {"requires_any": ["target_candidates", "stratified_target_evidence"]},
-    "retrieve_associated_diseases": {"requires_all": ["resolved_target"], "provides": ["disease_target_association"]},
+    "retrieve_associated_diseases": {"requires_all": ["resolved_target"], "provides": ["disease_target_association"], "required_safeguards": ["association_score_not_probability", "association_does_not_imply_efficacy"]},
     "rank_diseases": {"requires_all": ["disease_target_association"], "provides": ["disease_ranking"]},
     "compare_disease_rank": {"requires_all": ["disease_ranking"], "provides": ["disease_rank_comparison"]},
     "retrieve_genetic_evidence": {"requires_any": ["target_candidates", "disease_target_association"], "provides": ["genetic_evidence"]},
-    "filter_supported_without_clinical_drug": {"requires_all": ["genetic_evidence", "clinical_stage_evidence"], "provides": ["supported_without_clinical_drug"]},
+    "filter_supported_without_clinical_drug": {"requires_all": ["genetic_evidence", "clinical_stage_evidence"], "provides": ["supported_without_clinical_drug"], "required_safeguards": ["no_drug_claim_source_bounded_and_dated"]},
     "retrieve_genetic_and_somatic_evidence": {"requires_any": ["target_candidates", "disease_target_association"], "provides": ["genetic_somatic_evidence"]},
-    "filter_first_in_class_candidates": {"requires_all": ["genetic_somatic_evidence", "target_drug_evidence"], "provides": ["first_in_class_candidates"]},
-    "rank_opportunities": {"requires_all": ["first_in_class_candidates"], "provides": ["opportunity_ranking"]},
-    "retrieve_datasource_evidence": {"requires_all": ["disease_target_association"], "provides": ["datasource_evidence"]},
-    "retrieve_evidence_by_type": {"requires_all": ["disease_target_association"], "provides": ["evidence_by_type"]},
-    "compare_evidence_types": {"requires_any": ["datasource_evidence", "evidence_by_type"], "provides": ["evidence_type_comparison"]},
-    "normalize_comparison_dimensions": {"requires_any": ["evidence_by_type", "datasource_evidence"], "provides": ["normalized_comparison"]},
+    "filter_first_in_class_candidates": {"requires_all": ["genetic_somatic_evidence", "target_drug_evidence"], "provides": ["first_in_class_candidates"], "supported_filters": ["max_genetic_somatic_score"], "required_safeguards": ["no_drug_claim_source_bounded_and_dated", "missing_not_negative"]},
+    "rank_opportunities": {"requires_all": ["first_in_class_candidates", "tractability_evidence"], "provides": ["opportunity_ranking"]},
+    "filter_phase2_not_approved_for_disease": {"requires_all": ["clinical_stage_evidence", "approval_evidence"], "required_safeguards": ["trial_phase_not_approval", "approval_requires_explicit_source"]},
+    "filter_targets": {"requires_any": ["target_candidates", "stratified_target_evidence"], "supported_filters": ["overall_association_score", "rank", "known_drug_count", "exact_disease_drug_count", "tractable_bucket_count", "tractable_modalities"]},
+    "retrieve_datasource_evidence": {"requires_all": ["disease_target_association"], "provides": ["datasource_evidence"], "supported_filters": ["evidence_type"], "required_safeguards": ["datasource_score_not_record_count"]},
+    "retrieve_evidence_by_type": {"requires_all": ["disease_target_association"], "provides": ["evidence_by_type"], "supported_filters": ["evidence_type"], "required_safeguards": ["datasource_score_not_record_count"]},
+    "retrieve_datasource_scores": {"requires_all": ["disease_target_association"], "provides": ["datasource_scores"], "required_safeguards": ["datasource_score_not_record_count"]},
+    "rank_datasource_contributions": {"requires_all": ["datasource_scores"]},
+    "compare_evidence_types": {"requires_any": ["datasource_evidence", "evidence_by_type"], "provides": ["evidence_type_comparison"], "required_safeguards": ["datasource_score_not_record_count"]},
+    "normalize_comparison_dimensions": {"requires_any": ["evidence_by_type", "datasource_evidence"], "provides": ["normalized_comparison"], "required_safeguards": ["same_comparison_denominator"]},
     "compare_targets": {"requires_all": ["normalized_comparison"], "provides": ["target_comparison"]},
-    "retrieve_disease_drugs": {"requires_all": ["resolved_disease"], "provides": ["disease_drug_evidence"]},
-    "retrieve_target_cancers": {"requires_any": ["target_drug_evidence", "resolved_target", "target_candidates"], "provides": ["target_cancer_evidence"]},
-    "join_cross_indication_paths": {"requires_all": ["disease_drug_evidence", "target_drug_evidence", "target_cancer_evidence"], "provides": ["cross_indication_paths"]},
+    "retrieve_disease_drugs": {"requires_all": ["resolved_disease"], "provides": ["disease_drug_evidence"], "required_safeguards": ["approval_requires_explicit_source"]},
+    "join_disease_target_drug": {"requires_all": ["disease_target_association", "target_drug_evidence"], "provides": ["disease_target_drug_edges"], "supported_filters": ["existing_drug"], "required_safeguards": ["association_does_not_imply_efficacy"]},
+    "rank_candidates": {"requires_any": ["disease_target_drug_edges", "stratified_target_evidence", "target_candidates"]},
+    "intersect_targets": {"requires_all": ["disease_target_association"], "provides": ["target_intersection"]},
+    "compare_association_evidence": {"requires_all": ["disease_target_association"], "provides": ["association_comparison"], "required_safeguards": ["score_not_comparable_without_context"]},
+    "retrieve_target_cancers": {"requires_any": ["target_drug_evidence", "resolved_target", "target_candidates"], "provides": ["target_cancer_evidence"], "supported_filters": ["cancer_only", "exclude_index_disease"], "required_safeguards": ["association_does_not_imply_indication"]},
+    "join_cross_indication_paths": {"requires_all": ["disease_drug_evidence", "target_drug_evidence", "target_cancer_evidence"], "provides": ["cross_indication_paths"], "required_safeguards": ["association_does_not_imply_indication"]},
     "classify_kinase_targets": {"requires_any": ["target_candidates", "resolved_target"], "provides": ["target_family_classification", "target_candidates"]},
-    "define_coverage_denominators": {"requires_all": ["target_candidates", "target_drug_evidence"], "provides": ["coverage_definition"]},
+    "define_coverage_denominators": {"requires_all": ["target_family_classification", "target_drug_evidence"], "provides": ["coverage_definition"], "required_safeguards": ["define_drug_coverage", "same_comparison_denominator"]},
     "calculate_coverage_rates": {"requires_all": ["coverage_definition"], "provides": ["coverage_rates"]},
-    "compare_disease_rates": {"requires_all": ["coverage_rates"], "provides": ["disease_rate_comparison"]},
+    "compare_disease_rates": {"requires_all": ["coverage_rates"], "provides": ["disease_rate_comparison"], "required_safeguards": ["same_comparison_denominator"]},
+}
+
+
+# Path index: how each operation sits on a question's path. The slot planner
+# assembles Plans from these roles; nothing outside this table names them.
+_OT = ["open_targets"]
+# Open Targets drug, mechanism and indication records are ChEMBL-derived.
+_OT_CHEMBL = ["open_targets", "chembl"]
+_PATH_ROLES: dict[str, dict] = {
+    "resolve_disease": {"kind": "resolve", "subject_type": "disease"},
+    "resolve_target": {"kind": "resolve", "subject_type": "target"},
+    "resolve_drug": {"kind": "resolve", "subject_type": "drug"},
+    "resolve_diseases": {"kind": "resolve", "subject_type": "disease", "name": "many"},
+    # Combined resolvers: the start entity plus named entities on its path.
+    "resolve_disease_and_drugs": {"kind": "resolve", "subject_type": "disease", "name": "with_drugs"},
+    "resolve_disease_target": {"kind": "resolve", "subject_type": "disease", "name": "pair"},
+    "resolve_disease_targets": {"kind": "resolve", "subject_type": "disease", "name": "pairs"},
+    "resolve_targets": {"kind": "resolve", "subject_type": "target", "name": "many"},
+    "discover_targets_per_disease": {
+        "kind": "hop", "subject_type": "disease", "object_type": "target",
+        "name": "associated", "per_entity": True,
+        "meaning": "每個疾病各自的相關聯標的，分開保留",
+    },
+    "resolve_target_variants": {
+        "kind": "resolve", "subject_type": "target", "name": "variant",
+        "scope_filter": "target_variant", "scope_grouping": "group_by_variant",
+    },
+    "discover_targets": {
+        "kind": "hop", "subject_type": "disease", "object_type": "target",
+        "name": "associated", "default": True, "meaning": "與疾病相關聯的標的",
+    },
+    "retrieve_associated_diseases": {
+        "kind": "hop", "subject_type": "target", "object_type": "disease",
+        "name": "associated", "default": True, "meaning": "與標的相關聯的疾病",
+    },
+    "retrieve_exact_pair": {
+        "kind": "hop", "subject_type": "target", "object_type": "disease",
+        "name": "exact", "meaning": "指名標的與指名疾病之間的那一條關聯",
+    },
+    "retrieve_exact_pairs": {
+        "kind": "hop", "subject_type": "target", "object_type": "disease",
+        "name": "exact", "per_entity": True,
+        "meaning": "幾個指名標的各自與指名疾病之間的關聯，分開保留",
+    },
+    "retrieve_evidence_by_type": {
+        "kind": "attribute", "subject_type": "association", "name": "evidence_by_type",
+        # Without a stated type, compare every Open Targets evidence type.
+        "fixed_filters": {"evidence_type": {"in": [
+            "genetic_association", "somatic_mutation", "known_drug",
+            "affected_pathway", "rna_expression", "literature", "animal_model",
+        ]}},
+        "meaning": "關聯依證據類型分開的分數",
+    },
+    "compare_evidence_types": {
+        "kind": "analysis", "subject_type": "association", "name": "compare_evidence_types",
+        "default_metric": "datasource_contribution",
+        "aggregation_key": "group_by_evidence_type",
+        "meaning": "一條關聯主要來自哪一類證據（依證據類型的貢獻排序）",
+    },
+    "rank_datasource_contributions": {
+        "kind": "analysis", "subject_type": "association", "name": "rank_datasource_contributions",
+        "default_metric": "datasource_score",
+        "aggregation_key": "datasource_contribution_comparison",
+        "meaning": "一條關聯中哪個資料來源貢獻最大（依 datasource score 排序）",
+    },
+    "compare_targets": {
+        "kind": "analysis", "subject_type": "association", "name": "compare_targets",
+        "aggregation_key": "group_by_target_and_evidence_type",
+        "meaning": "在相同證據類型維度上並列比較幾個標的與同一疾病的關聯",
+    },
+    "filter_supported_without_clinical_drug": {
+        "kind": "analysis", "subject_type": "target", "name": "supported_without_clinical_drug",
+        "aggregation_key": "target_evidence_drug_join",
+        "meaning": "有 genetic evidence、但在已查來源沒有藥物進入臨床的標的",
+    },
+    "filter_targets": {"kind": "filter", "subject_type": "target"},
+    "define_coverage_denominators": {
+        "kind": "follow_up", "subject_type": "target", "name": "coverage_denominators",
+        "aggregation_key": "coverage_numerator_denominator",
+        "meaning": "覆蓋率的分子與分母：家族內的相關標的，以及其中有藥物紀錄者",
+    },
+    "compare_disease_rates": {
+        "kind": "analysis", "subject_type": "target", "name": "compare_kinase_drug_coverage",
+        "aggregation_key": "compare_disease_rates",
+        "meaning": "幾個疾病的相關標的中，kinase 家族被藥物覆蓋的比例並列比較",
+    },
+    "retrieve_safety_evidence": {
+        "kind": "attribute", "subject_type": "target", "name": "safety_risk",
+        # Known safety risk includes trials terminated with a recorded reason.
+        "then": ["retrieve_trial_terminations"],
+        "meaning": "標的已知的安全性風險（含已終止試驗及其理由）",
+    },
+    "retrieve_normal_tissue_expression": {
+        "kind": "attribute", "subject_type": "target", "name": "normal_tissue_expression",
+        "meaning": "標的在正常組織的表現量",
+    },
+    "integrate_safety_and_expression": {
+        "kind": "analysis", "subject_type": "target", "name": "integrate_safety_and_expression",
+        "aggregation_key": "group_by_target_risk_and_tissue",
+        "meaning": "把標的的安全性風險、終止試驗與正常組織表現並列整合（事實與推論分開）",
+    },
+    "filter_phase2_not_approved_for_disease": {
+        "kind": "analysis", "subject_type": "target", "name": "phase2_not_approved_for_disease",
+        "aggregation_key": "target_drug_trial_indication_join",
+        "meaning": "已有 Phase 2 以上藥物、但這些藥物在已查來源尚未核准用於起點疾病的標的",
+    },
+    "filter_first_in_class_candidates": {
+        "kind": "follow_up", "subject_type": "target", "name": "first_in_class_candidates",
+        "needs_stated_filter": "max_genetic_somatic_score",
+        "aggregation_key": "target_evidence_drug_tractability_join",
+        "meaning": "有遺傳或體細胞突變證據、但在已查來源沒有任何藥物的標的",
+    },
+    "rank_opportunities": {
+        "kind": "analysis", "subject_type": "target", "name": "first_in_class_opportunities",
+        "default_metric": "max_genetic_somatic_score",
+        "meaning": "first-in-class 機會：上述標的依證據強度排序，並附 tractability 偏低警訊",
+    },
+    "retrieve_target_cancers": {
+        "kind": "hop", "subject_type": "target", "object_type": "disease",
+        "name": "cancer", "meaning": "標的關聯的癌別",
+    },
+    "retrieve_target_drugs": {
+        "kind": "hop", "subject_type": "target", "object_type": "drug",
+        "name": "known_drug", "default": True, "meaning": "作用在標的上的已知藥物",
+    },
+    "retrieve_drug_targets": {
+        "kind": "hop", "subject_type": "drug", "object_type": "target",
+        "name": "mechanism_target", "default": True, "meaning": "藥物的作用標的",
+    },
+    "retrieve_approved_indications": {
+        "kind": "hop", "subject_type": "drug", "object_type": "disease",
+        "name": "approved_indication", "default": True,
+        "fixed_filters": {"approval_status": "approved"},
+        "meaning": "藥物的核准適應症",
+    },
+    "retrieve_disease_drugs": {
+        "kind": "hop", "subject_type": "disease", "object_type": "drug",
+        "name": "known_drug", "default": True, "meaning": "用於該疾病的藥物",
+    },
+    "retrieve_mechanisms": {
+        "kind": "attribute", "subject_type": "drug", "name": "mechanism_of_action",
+        "meaning": "藥物的作用機制",
+    },
+    "retrieve_tractability": {
+        "kind": "attribute", "subject_type": "target", "name": "tractability",
+        "meaning": "標的的可成藥性（tractability）",
+    },
+    "rank_targets": {
+        "kind": "rank", "subject_type": "target",
+        "default_metric": "overall_association_score",
+    },
+    "rank_diseases": {
+        "kind": "rank", "subject_type": "disease",
+        "default_metric": "overall_association_score",
+    },
+    "rank_candidates": {
+        "kind": "rank", "subject_type": "drug",
+        "default_metric": "overall_association_score",
+    },
+    "intersect_targets": {
+        "kind": "combine", "subject_type": "target", "name": "intersect",
+        "path_types": ["disease", "target"], "per_entity": True,
+        "aggregation_key": "target_set_intersection",
+        "then": ["compare_association_evidence"],
+        "meaning": "幾個疾病都有的相關聯標的（交集），各疾病的分數分開保留",
+    },
+    "compare_association_evidence": {
+        "kind": "follow_up", "subject_type": "target",
+        "aggregation_key": "report_scores_per_disease",
+        "meaning": "並列各疾病的關聯分數，不合成單一分數",
+    },
+    "join_cross_indication_paths": {
+        "kind": "combine", "subject_type": "disease", "name": "join_path",
+        "path_types": ["disease", "drug", "target", "disease"],
+        "aggregation_key": "group_by_drug_and_target",
+        "meaning": "把起點疾病的藥物、藥物的標的、標的的其他疾病串成路徑，保留每條邊",
+    },
+    "join_disease_target_drug": {
+        "kind": "combine", "subject_type": "drug", "name": "join_path",
+        "path_types": ["disease", "target", "drug"],
+        # The join keeps only drugs that have a record for the target.
+        "fixed_filters": {"existing_drug": True},
+        "aggregation_key": "disease_target_drug_join",
+        "meaning": "把每個藥物經由它的標的連回起點疾病，保留每條邊與關聯分數",
+    },
+    "compare_disease_rank": {
+        "kind": "check", "subject_type": "disease", "name": "rank_position",
+        "aggregation_key": "disease_relative_rank",
+        "meaning": "指名的疾病在排序結果中的位置（例如是否最強）",
+    },
+    "check_indication": {
+        "kind": "check", "subject_type": "disease", "name": "approved_indication",
+        "meaning": "指名的疾病是否在藥物的核准適應症中",
+    },
+}
+_DEFAULT_SOURCES: dict[str, list[str]] = {
+    "resolve_disease": _OT,
+    "resolve_target": _OT,
+    "resolve_drug": _OT,
+    "resolve_diseases": _OT,
+    "resolve_targets": _OT,
+    "resolve_target_variants": _OT,
+    "resolve_disease_and_drugs": _OT,
+    "resolve_disease_target": _OT,
+    "resolve_disease_targets": _OT,
+    "retrieve_exact_pair": _OT,
+    "retrieve_exact_pairs": _OT,
+    "retrieve_datasource_evidence": _OT,
+    "retrieve_evidence_by_type": _OT,
+    "retrieve_genetic_evidence": _OT,
+    "retrieve_genetic_and_somatic_evidence": _OT,
+    "retrieve_safety_evidence": _OT,
+    "retrieve_trial_terminations": _OT,
+    "retrieve_normal_tissue_expression": _OT,
+    "discover_targets_per_disease": _OT,
+    "discover_targets": _OT,
+    "retrieve_associated_diseases": _OT,
+    "retrieve_target_cancers": _OT,
+    "retrieve_tractability": _OT,
+    "retrieve_target_drugs": _OT_CHEMBL,
+    "retrieve_drug_targets": _OT_CHEMBL,
+    "retrieve_approved_indications": _OT_CHEMBL,
+    "retrieve_disease_drugs": _OT_CHEMBL,
+    "retrieve_mechanisms": _OT_CHEMBL,
 }
 
 
@@ -339,7 +642,12 @@ def _operation_contract(operation: str) -> dict:
     safeguards = set(contract.pop("required_safeguards", []))
     if _operation_kind(operation) == "retrieval":
         safeguards.update({"provenance_pagination_truncation", "missing_not_negative"})
-    return {**contract, "required_safeguards": sorted(safeguards)}
+    return {
+        **contract,
+        "required_safeguards": sorted(safeguards),
+        "default_sources": _DEFAULT_SOURCES.get(operation, []),
+        "path_role": _PATH_ROLES.get(operation),
+    }
 
 
 OPERATION_TABLE: dict[str, OperationTableEntry] = {
@@ -367,6 +675,95 @@ OPERATION_ALIAS_TO_CANONICAL = {
     for canonical, entry in OPERATION_TABLE.items()
     for alias in [canonical, *entry.equivalent_operations]
 }
+
+
+def _path_index(kind: str) -> dict[tuple, str]:
+    index: dict[tuple, str] = {}
+    for operation, entry in OPERATION_TABLE.items():
+        role = entry.path_role
+        if role is None or role.kind != kind:
+            continue
+        if kind == "hop" and role.per_entity:
+            continue  # listed in PER_ENTITY_HOPS
+        if kind == "hop":
+            key = (role.subject_type, role.object_type, role.name)
+        elif kind == "combine":
+            key = (role.name, tuple(role.path_types))
+        else:
+            key = (role.subject_type, role.name)
+        if key in index:
+            raise ValueError(f"path index key {key} is claimed twice")
+        index[key] = operation
+    return index
+
+
+# Path index views, derived from OPERATION_TABLE. Keys:
+#   RESOLVE_INDEX[(entity_type, "default"|"variant")]
+#   HOP_INDEX[(from_type, to_type, relation)]
+#   ATTRIBUTE_INDEX / CHECK_INDEX[(entity_type, name)]
+#   RANK_INDEX[(entity_type, "default")]
+#   COMBINE_INDEX[(name, path_types)], e.g. ("join_path", ("disease", "target", "drug"))
+RESOLVE_INDEX = _path_index("resolve")
+HOP_INDEX = _path_index("hop")
+ATTRIBUTE_INDEX = _path_index("attribute")
+RANK_INDEX = _path_index("rank")
+CHECK_INDEX = _path_index("check")
+COMBINE_INDEX = _path_index("combine")
+FILTER_STEPS: dict[str, str] = {
+    entry.path_role.subject_type: operation
+    for operation, entry in OPERATION_TABLE.items()
+    if entry.path_role and entry.path_role.kind == "filter"
+}
+ANALYSIS_INDEX: dict[str, str] = {
+    entry.path_role.name: operation
+    for operation, entry in OPERATION_TABLE.items()
+    if entry.path_role and entry.path_role.kind == "analysis"
+}
+# Filters the question can state, by name. Only filters an operation lists in
+# supported_filters and its adapter applies belong here.
+FILTER_MEANINGS: dict[str, str] = {
+    "cancer_only": "只保留癌症類疾病",
+    "exclude_index_disease": "排除起點疾病本身（「其他」疾病）",
+    "evidence_type": "只看題目點名的證據類型；value 是清單",
+    "overall_association_score": '與疾病的關聯分數門檻；value 例如 {"gt": 0.7}，數字要寫在題目裡',
+    "small_molecule_tractable": "具已知小分子結合口袋（tractability 含 SM）",
+    "max_genetic_somatic_score": '遺傳或體細胞突變證據分數的門檻；value 例如 {"gte": 0.5}，數字要寫在題目裡',
+}
+# Filters that become a filter step: executor field, fixed condition (if the
+# name alone says it), and the evidence the field needs.
+FILTER_RULES: dict[str, dict[str, Any]] = {
+    "overall_association_score": {
+        "field": "overall_association_score", "requires": "disease_target_association",
+    },
+    "small_molecule_tractable": {
+        "field": "tractable_modalities", "condition": {"contains": "SM"},
+        "requires": "tractability_evidence",
+    },
+}
+# Allowed values for filters whose value is a list of names.
+FILTER_VALUES: dict[str, list[str]] = {
+    "evidence_type": [
+        "genetic_association", "somatic_mutation", "known_drug",
+        "affected_pathway", "rna_expression", "literature", "animal_model",
+    ],
+}
+# Producer to add when a capability is missing and several operations make it.
+DEFAULT_PRODUCERS: dict[str, str] = {
+    "target_drug_evidence": "retrieve_target_drugs",
+}
+
+# One step that walks a hop for several named entities, keeping them apart.
+PER_ENTITY_HOPS: dict[tuple[str, str, str], str] = {
+    (entry.path_role.subject_type, entry.path_role.object_type, entry.path_role.name): operation
+    for operation, entry in OPERATION_TABLE.items()
+    if entry.path_role and entry.path_role.kind == "hop" and entry.path_role.per_entity
+}
+DEFAULT_HOPS: dict[tuple[str, str], str] = {}
+for (_from, _to, _relation), _operation in HOP_INDEX.items():
+    if OPERATION_TABLE[_operation].path_role.default:
+        if (_from, _to) in DEFAULT_HOPS:
+            raise ValueError(f"hop {_from}->{_to} has two default operations")
+        DEFAULT_HOPS[(_from, _to)] = _operation
 
 
 def normalize_plan_operations(plan: QueryManifestV2) -> list[str]:

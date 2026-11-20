@@ -959,3 +959,158 @@ The target-translation layer rule is still provisional and awaits research-team 
 `compile_manifest` now fills `inputs` from `depends_on`: one reference per upstream step, pointing at its first declared output. The staged Planner output for `pdac_known_targets` compiles and runs end to end through `run_plan` (six steps, all `success`). Replaying older saved plans with derived `inputs` compiled 7 and refused 7; every refusal came from existing plan checks (unknown legacy operation names, ranking metrics no upstream step produces), none from `inputs`. Only one acceptance case has been run end to end so far.
 
 The full suite passes 367 tests with no failures.
+## P1: slot planner (2026-11-19)
+
+P1 (slow, unstable Plans with wrong dependencies) is addressed by splitting
+planning in two. The model fills only a small table: entities and their types,
+the path of entity types (disease → target), and conditions the question states
+(ranking, checks, evidence). `slot_planner.py` assembles the `QueryManifestV2`
+from `OPERATION_TABLE`: one resolve step per entity, one table lookup per hop,
+and step IDs, `depends_on`, inputs, outputs, sources and safeguards filled from
+the table. Plan size equals resolves + hops + stated conditions.
+
+Table changes: each operation can carry a `path_role` (resolve, hop, attribute,
+rank, check) and `default_sources`; derived views `RESOLVE_INDEX`, `HOP_INDEX`,
+`DEFAULT_HOPS`, `ATTRIBUTE_INDEX`, `RANK_INDEX`, `CHECK_INDEX` are the hop
+index. `retrieve_associated_diseases` now requires the same association
+safeguards as `discover_targets`. `retrieve_target_drugs` declares
+`target_variant` and `retrieve_approved_indications` declares `approval_status`
+as supported filters; the adapters do not yet apply either filter (variant
+results stay gene-level with `variant_context`, and `check_indication`
+classifies approval stages). The grounding rule accepts "KRAS G12D" when the
+question writes "KRAS G12C／G12D".
+
+Acceptance compares the table with `expected_slots`, the question set's own
+labels, added for the four category-1 cases. The answer-sheet change to
+`pdac_known_targets` (single hop) is in the fixture; the former layered case
+lives in `tests/fixtures/layered_targets_test_case.json` and the seven tests that
+exercise it now read that file. Automated regression: 394 tests passed.
+
+First live comparison, NIM `nvidia/nemotron-3.5-super-vl-120b-a12b`, one run per
+question, Plan-only, no retrieval
+(`outputs/plans/slot_vs_plan_query_cat1_v1/summary.json`):
+
+| Question | plan-query-slots | plan-query |
+| --- | --- | --- |
+| pdac_known_targets | 5.7 s, 1 call, 2 steps, correct | 101.0 s, 3 calls, 6 steps; passes rubric and rules but the executor refuses it |
+| kras_associated_diseases | 12.6 s, 2 calls, 5 steps, correct | 54.6 s, 2 calls, 4 steps, correct |
+| kras_variant_drugs | 6.1 s, 1 call, 3 steps, correct | 226.4 s, 3 calls, failed (no `group_by_variant`; repairs rejected) |
+| olaparib_targets_indications | 6.3 s, 1 call, 5 steps, correct | 54.3 s, 1 call, 5 steps, correct |
+
+Total 30.8 s versus 436.4 s. The one slot retry (KRAS diseases) was the model
+omitting 胰臟癌 from entities; Python named the row and the second call fixed it.
+Limits: one run per question, so stability is not shown; `kras_associated_diseases`
+is an internal holdout but was visible while the table and labels were designed,
+so it is not a blind holdout result. Two-hop, comparison, aggregation and safety
+questions are not covered yet; threshold filters are rejected by the table until
+they are added.
+
+### Two-hop: drug repurposing (2026-11-19)
+
+The table now has a `combine` role. `join_disease_target_drug` is the
+`join_path` over disease → target → drug (fixed filter `existing_drug`,
+aggregation `disease_target_drug_join`, safeguard
+`association_does_not_imply_efficacy`); `rank_candidates` ranks drug rows. The
+small table gains `combine` and entity `aliases` (胰臟癌 … PDAC is one entity).
+A ranking is refused when the ranked rows do not carry the metric, e.g. drugs
+ranked by target association without the join.
+
+Live run (`outputs/plans/slot_vs_plan_query_repurposing_v1`): the slot planner
+filled the table exactly as labelled in one call (6.9 s) and assembled a 4-step
+Plan that passes operation rules and compiles. Category 1 still passed 4/4, each
+in one call, after the prompt change. `plan-query` failed after 4 calls and
+116.0 s.
+
+Pending decision, not a planner defect: the answer sheet requires ranking by
+`target_association_and_drug_maturity`, which is not a registered metric and
+cannot be computed (drug stage is text). Neither planner can pass both the
+rubric and the operation rules: `plan-query` attempt 3 passed the rubric by
+using that name and was blocked by the rules; attempt 4 passed the rules and
+failed the rubric. The question does not ask for ordering, so the repurposing
+labels contain no ranking.
+
+### Two-hop: shared targets (2026-11-19)
+
+`intersect_targets` is the `intersect` combine over disease → target paths
+(aggregation `target_set_intersection`), and the table always appends
+`compare_association_evidence` after it (aggregation
+`report_scores_per_disease`, safeguard `score_not_comparable_without_context`,
+no combined score). Same-shape paths from different named entities are merged
+into one `resolve_diseases` + `discover_targets_per_disease` step, from the
+table's `many` resolver and per-entity hop. This is an executor requirement,
+not only an answer-sheet preference: `intersect_targets` reads `by_disease`
+from one step, and two separate `discover_targets` steps would overwrite each
+other's `target_candidates` on the board. Same-shape multi-hop paths are refused
+until a per-entity chain exists.
+
+Live checks (`outputs/plans/slot_vs_plan_query_shared_targets_v1`,
+`slot_prompt_fix_check_v1`, `slot_prompt_fix_check_v2`): the slot planner's
+shared-target Plan passes the full answer sheet, operation rules and the
+executor compile; `plan-query` also passed, in 112.7 s and 2 calls. The first
+slot run needed a fix-up because the prompt displayed the combine kind as
+"intersect over disease -> target" and the model copied it; the display now
+separates the kind name. A single object written where a list belongs is now
+wrapped and recorded in `normalizations`. After both fixes, three runs each of
+shared targets and repurposing all filled the table as labelled in one call
+(shared targets 4.2–5.0 s; repurposing 27.9–47.4 s). Repurposing time varies with
+the hosted model's hidden reasoning (952 to 7,043 output tokens for the same
+254-character answer). Category 1 still passed 4/4 in one call each. Automated
+regression: 409 tests passed.
+
+### All 18 questions (2026-11-20)
+
+The slot table now covers every question category. New table roles:
+attribute rows (`retrieve_mechanisms`, `retrieve_tractability`,
+`retrieve_evidence_by_type`, `retrieve_safety_evidence` with its table
+follow-up `retrieve_trial_terminations`, `retrieve_normal_tissue_expression`),
+the `filter_targets` filter step with `FILTER_RULES` for stated thresholds, and
+named analyses (`compare_evidence_types`, `rank_datasource_contributions`,
+`compare_targets`, `filter_supported_without_clinical_drug`,
+`filter_phase2_not_approved_for_disease`, `rank_opportunities`,
+`compare_disease_rates`, `integrate_safety_and_expression`). The program adds
+each analysis's prerequisites from the contracts, and also the evidence its
+default metric is registered against when that evidence is not upstream yet.
+Context entities (a family, pathway or tissue group that only scopes the
+question) are recorded in the Plan and never resolved. Metric registry
+additions: `datasource_contribution` → `datasource_evidence`,
+`max_genetic_somatic_score` → `genetic_somatic_evidence`.
+
+Coverage of the 18 questions:
+- 15 labelled questions assemble from their labels into Plans that pass the
+  operation rules and compile. Seven also pass the full answer sheet. The other
+  eight differ from the answer sheet only in ways recorded in
+  `ANSWER_SHEET_GAPS` (`tests/test_slot_planner.py`): undefined filter or
+  ranking names such as `genetic_evidence_strength` and `clinical_maturity`,
+  and sources the executor does not query (`europe_pmc`, `clinicaltrials_gov`).
+- `pdac_first_in_class_opportunity` is labelled but blocked: the question says
+  "strong" with no number, and `filter_first_in_class_candidates` needs a
+  stated `max_genetic_somatic_score` threshold. With a number the same table
+  assembles and compiles.
+- `pdac_clinical_mechanism_distribution` and `pdac_withdrawn_terminated_drugs`
+  are not labelled: the executor cannot run their chains yet (interventions →
+  mechanisms; negative publications need resolved targets or drugs).
+
+Model call: on NIM the slot planner binds `reasoning_effort="low"`
+(`SLOT_PLANNER_REASONING_EFFORT=default` turns it off). Disabling thinking
+entirely was about 1 s per call but misread the questions, so it is not used.
+
+Live run, NIM `nvidia/nemotron-3.5-super-vl-120b-a12b`
+(`outputs/plans/slot_all18_v1`, `outputs/plans/plan_query_new12_v1`):
+- Slot planner, all 18: 361 s in total, median 15.4 s, range 4.4–45.0 s; 16
+  questions in one call, 2 after one fix-up (validation caught a missing path
+  and an unreachable filter). Time follows hidden reasoning length (552–6,288
+  output tokens).
+- Reading: 12 of 16 labelled tables matched the labels exactly. Three
+  mismatches assemble the same Plan as the labels (an omitted context entity,
+  a redundant `evidence_by_type` row, a two-hop path written as one hop that
+  the contracts complete). One changed the Plan: for CLDN18.2 the model wrote
+  `evidence_by_type` and no `evidence_type` filter for the three named types.
+  That table exposed the assembler gap above (the analysis metric's evidence
+  was missing, so the Plan failed the operation rules); after the fix it
+  assembles an executable Plan that compares all seven types instead of the
+  three named.
+- `plan-query` on the 12 questions not compared before: 3,340 s in total,
+  median 234.7 s, up to 658 s; 1 of 12 passed (`pdac_drugs_other_cancers`), 7
+  of 12 final Plans pass the operation rules and compile.
+
+Automated regression: 433 tests passed.

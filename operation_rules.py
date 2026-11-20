@@ -121,6 +121,10 @@ _METRIC_REQUIREMENTS: dict[str, str] = {
     "overall_association_score": "disease_target_association",
     "min_evidence_score": "disease_target_association",
     "datasource_score": "disease_target_association",
+    # compare_evidence_types ranks evidence types by this (datatype score).
+    "datasource_contribution": "datasource_evidence",
+    # Larger of a target's genetic and somatic datatype scores (first-in-class).
+    "max_genetic_somatic_score": "genetic_somatic_evidence",
     "drug_count": "target_drug_evidence",
     "known_drug_count": "target_drug_evidence",
     "tractability_score": "tractability_evidence",
@@ -212,6 +216,27 @@ def _grounding_text(value: str) -> str:
     return "".join(character for character in normalized if character.isalnum())
 
 
+_GENE_VARIANT = re.compile(
+    r"^\s*([A-Za-z][A-Za-z0-9-]*)\s+((?:p\.)?[A-Za-z]{1,3}\d{1,5}[A-Za-z*]{1,3})\s*$"
+)
+
+
+def mention_is_grounded(mention: str, normalized_question: str) -> bool:
+    """A mention is grounded when it is written in the question.
+
+    "KRAS G12D" also counts when the question writes the gene and the mutation
+    separately, as in "KRAS G12C／G12D".
+    """
+    normalized = _grounding_text(mention)
+    if normalized and normalized in normalized_question:
+        return True
+    match = _GENE_VARIANT.match(unicodedata.normalize("NFKC", mention))
+    if match is None:
+        return False
+    gene, variant = (_grounding_text(part) for part in match.groups())
+    return gene in normalized_question and variant in normalized_question
+
+
 def _known_metrics(value: Any) -> set[str]:
     """Collect only reviewed metric identifiers from nested plan controls."""
 
@@ -260,8 +285,8 @@ def evaluate_operation_rules(plan: QueryManifestV2) -> OperationRuleEvaluation:
     for entity in plan.entities:
         normalized_mention = _grounding_text(entity.mention)
         normalized_ref = _grounding_text(entity.entity_ref)
-        not_in_question = (
-            not normalized_mention or normalized_mention not in normalized_question
+        not_in_question = not mention_is_grounded(
+            entity.mention, normalized_question
         )
         duplicates_output = (
             normalized_mention in output_names or normalized_ref in output_names

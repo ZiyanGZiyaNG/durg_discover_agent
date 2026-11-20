@@ -363,6 +363,46 @@ python agent.py plan-query-staged `
   --output "D:\NCKU_Drug_Discovery\outputs\plans\pdac_known_targets_staged_v1.json"
 ```
 
+### Slot planner (`plan-query-slots`)
+
+The model fills only a small table; Python assembles the whole Plan from
+`OPERATION_TABLE`:
+
+- `entities`: what the question names and its type (`胰臟癌` is a disease);
+  a gene with mutations is one target with `variants`; other names go in
+  `aliases`; a family, pathway or tissue group that only scopes the question is
+  a `context` entity.
+- `paths`: the entity types walked from a named entity, e.g.
+  `["disease", "target"]`, optionally with named middle entities (`via`) or a
+  named end (`end`, the one edge between two named entities).
+- Conditions the question states: `combine` (join a path, intersect paths),
+  `filters`, `ranking`, `checks`, `evidence` and named `analyses`.
+
+Each entity gets a resolve step, each hop is looked up in the table's path index
+(`HOP_INDEX`, e.g. disease → target is `discover_targets`), a named analysis
+gets its prerequisites from the table's `requires`/`provides`, and step IDs,
+`depends_on`, inputs, outputs, sources and safeguards are filled from the table.
+The model cannot write a dependency or an operation name. The prompt is
+generated from the same table. On NIM the table call uses
+`reasoning_effort=low` (`SLOT_PLANNER_REASONING_EFFORT=default` turns it off).
+
+Acceptance compares the table with `expected_slots`, the question set's own
+labels in the acceptance fixture, and also runs the plan rubric, operation rules
+and the execution compiler. 16 of the 18 questions are labelled; the two left
+(`pdac_clinical_mechanism_distribution`, `pdac_withdrawn_terminated_drugs`) need
+executor changes first, and `pdac_first_in_class_opportunity` waits for a
+definition of "strong" evidence.
+
+```powershell
+python agent.py plan-query-slots `
+  --acceptance-case pdac_known_targets `
+  --question "胰臟癌（pancreatic ductal adenocarcinoma, PDAC）目前有哪些已知的治療標的？" `
+  --output "D:\NCKU_Drug_Discovery\outputs\plans\pdac_known_targets_slots.json"
+```
+
+`compare_slot_planner.py --output DIR` runs the four questions through both
+`plan-query-slots` and `plan-query` and writes `summary.json`.
+
 If a free-text disease or target does not have exactly one matching canonical
 name, planning stops before Qwen and prints candidate IDs. Review the intended
 scope, then rerun with `--disease-id`; use `--target-id` when a target is also
